@@ -4,6 +4,7 @@ import { v } from "convex/values";
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 const MINUTE_MS = 60 * 1000;
+const MAX_REVIEW_INTERVAL = 36500;
 
 const LEARNING_STEPS = [1, 10];
 const RELEARNING_STEPS = [10];
@@ -16,11 +17,12 @@ const MINIMUM_LAPSE_INTERVAL = 1;
 const GRADUATING_INTERVAL_GOOD = 1;
 const GRADUATING_INTERVAL_EASY = 4;
 
+type Rating = "again" | "hard" | "good" | "easy";
+type Phase = "new" | "learning" | "review" | "relearning";
+
 async function requireUser(ctx: { auth: unknown; db: unknown }) {
   const userId = await getAuthUserId(ctx as never);
-  if (!userId) {
-    throw new Error("Not authenticated");
-  }
+  if (!userId) throw new Error("Not authenticated");
   return userId;
 }
 
@@ -32,21 +34,59 @@ function clampEase(easeFactor: number) {
   return Math.max(MINIMUM_EASE_FACTOR, easeFactor);
 }
 
-function roundDays(interval: number, minimum: number) {
-  return Math.max(minimum, Math.round(interval));
+function roundDays(interval: number, minimum = 1, maximum = MAX_REVIEW_INTERVAL) {
+  return Math.round(interval || 0).toString() === "NaN"
+    ? minimum
+    : Math.max(minimum, Math.min(maximum, Math.round(interval)));
 }
 
 function formatDelay(ms: number) {
-  if (ms % DAY_MS === 0) {
-    const days = ms / DAY_MS;
-    return `${days}d`;
-  }
-  const minutes = Math.round(ms / MINUTE_MS);
-  if (minutes >= 60) {
-    const hours = Math.round(minutes / 60);
-    return `${hours}h`;
-  }
+  if (ms >= DAY_MS && ms % DAY_MS === 0) return `${ms / DAY_MS}d`;
+  const minutes = Math.max(1, Math.round(ms / MINUTE_MS));
+  if (minutes >= 60 && minutes % 60 === 0) return `${minutes / 60}h`;
   return `${minutes}m`;
+}
+
+function hashString(value: string) {
+  let hash = 2166136261;
+  for (let index = 0; index < value.length; index += 1) {
+    hash ^= value.charCodeAt(index);
+    hash = Math.imul(hash, 16777619);
+  }
+  return hash >>> 0;
+}
+
+function fuzzFactorForCard(cardId: string) {
+  return (hashString(cardId) % 10_000) / 10_000;
+}
+
+function fuzzDelta(interval: number) {
+  if (interval < 2.5) return 0;
+  let delta = 1;
+  delta += 0.15 * Math.max(0, Math.min(interval, 7) - 2.5);
+  delta += 0.1 * Math.max(0, Math.min(interval, 20) - 7);
+  delta += 0.05 * Math.max(0, interval - 20);
+  return delta;
+}
+
+function constrainedFuzzBounds(interval: number, minimum: number, maximum: number) {
+  const clampedMinimum = Math.min(minimum, maximum);
+  const clampedInterval = Math.min(Math.max(interval, clampedMinimum), maximum);
+  let lower = Math.round(clampedInterval - fuzzDelta(clampedInterval));
+  let upper = Math.round(clampedInterval + fuzzDelta(clampedInterval));
+  lower = Math.max(clampedMinimum, Math.min(lower, maximum));
+  upper = Math.max(clampedMinimum, Math.min(upper, maximum));
+  if (upper === lower && upper > 2 && upper < maximum) upper = lower + 1;
+  return { lower, upper };
+}
+
+function applyReviewFuzz(interval: number, minimum: number, cardId: string, fuzz = true) {
+  const maximum = Math.max(1, MAX_REVIEW_INTERVAL);
+  const boundedMinimum = Math.max(1, Math.min(minimum, maximum));
+  if (!fuzz) return roundDays(interval, boundedMinimum, maximum);
+  const { lower, upper } = constrainedFuzzBounds(interval, boundedMinimum, maximum);
+  const spread = upper - lower + 1;
+  return Math.floor(lower + fuzzFactorForCard(cardId) * spread);
 }
 
 function getCurrentStepIndex(state: any, steps: number[]) {
@@ -54,19 +94,26 @@ function getCurrentStepIndex(state: any, steps: number[]) {
   return Math.max(0, Math.min(raw, Math.max(steps.length - 1, 0)));
 }
 
-function learningState(phase: "learning" | "relearning", intervalMinutes: number, stepIndex: number, now: number, overrides: Record<string, unknown> = {}) {
-  return {
-    phase,
-    interval: 0,
-    stepIndex,
-    dueAt: now + intervalMinutes * MINUTE_MS,
-    ...overrides,
-  };
+function getCurrentLearningStepMinutes(steps: number[], stepIndex: number) {
+  return steps[stepIndex] ?? steps[0] ?? 1;
+}
+
+function getHardLearningDelayMinutes(steps: number[], stepIndex: number) {
+  const current = getCurrentLearningStepMinutes(steps, stepIndex);
+  const next = steps[stepIndex + 1];
+  if (stepIndex === 0 && typeof next === "number") return (current + next) / 2;
+  if (stepIndex === 0) return Math.min(current * 1.5, current + 24 * 60);
+  return current;
+}
+
+function elapsedDays(state: any, now: number) {
+  if (!state?.lastReviewedAt) return Math.max(1, state?.interval ?? 1);
+  return Math.max(0, Math.floor((now - state.lastReviewedAt) / DAY_MS));
 }
 
 function reviewState(intervalDays: number, now: number, overrides: Record<string, unknown> = {}) {
   return {
-    phase: "review",
+    phase: "review" as Phase,
     interval: intervalDays,
     stepIndex: undefined,
     dueAt: now + intervalDays * DAY_MS,
@@ -74,7 +121,22 @@ function reviewState(intervalDays: number, now: number, overrides: Record<string
   };
 }
 
-function nextSchedule(state: any, rating: "again" | "hard" | "good" | "easy", now: number) {
+function learningState(
+  phase: "learning" | "relearning",
+  delayMinutes: number,
+  stepIndex: number,
+  now: number,
+  overrides: Record<string, unknown> = {},
+) {
+  return {
+    phase,
+    stepIndex,
+    dueAt: now + delayMinutes * MINUTE_MS,
+    ...overrides,
+  };
+}
+
+function nextSchedule(state: any, rating: Rating, now: number, cardId: string) {
   const current = state ?? {
     phase: "new",
     interval: 0,
@@ -84,6 +146,7 @@ function nextSchedule(state: any, rating: "again" | "hard" | "good" | "easy", no
     stepIndex: 0,
   };
 
+  const phase = (current.phase ?? "new") as Phase;
   const base = {
     easeFactor: clampEase(current.easeFactor ?? INITIAL_EASE_FACTOR),
     reps: (current.reps ?? 0) + 1,
@@ -92,19 +155,22 @@ function nextSchedule(state: any, rating: "again" | "hard" | "good" | "easy", no
     lastRating: rating,
   };
 
-  if (current.phase === "review") {
+  if (phase === "review") {
     const scheduledDays = Math.max(1, current.interval ?? 1);
-    const elapsedDays = current.lastReviewedAt
-      ? Math.max(0, Math.floor((now - current.lastReviewedAt) / DAY_MS))
-      : scheduledDays;
-    const daysLate = Math.max(0, elapsedDays - scheduledDays);
+    const elapsed = elapsedDays(current, now);
+    const daysLate = elapsed - scheduledDays;
 
     if (rating === "again") {
       const lapses = base.lapses + 1;
-      const lapseInterval = roundDays(Math.max(1, scheduledDays) * LAPSE_MULTIPLIER, MINIMUM_LAPSE_INTERVAL);
+      const lapseInterval = applyReviewFuzz(
+        Math.max(1, scheduledDays) * LAPSE_MULTIPLIER,
+        MINIMUM_LAPSE_INTERVAL,
+        cardId,
+        true,
+      );
       return {
         ...base,
-        ...learningState("relearning", RELEARNING_STEPS[0], 0, now, {
+        ...learningState("relearning", RELEARNING_STEPS[0] ?? 10, 0, now, {
           easeFactor: clampEase(base.easeFactor - 0.2),
           lapses,
           interval: lapseInterval,
@@ -112,8 +178,43 @@ function nextSchedule(state: any, rating: "again" | "hard" | "good" | "easy", no
       };
     }
 
+    if (daysLate < 0) {
+      const scheduled = Math.max(1, scheduledDays);
+      const elapsedPositive = Math.max(0, elapsed);
+      const hardInterval = roundDays(
+        Math.max(elapsedPositive * HARD_MULTIPLIER, scheduled * (HARD_MULTIPLIER / 2)),
+        1,
+      );
+      const goodInterval = roundDays(Math.max(elapsedPositive * base.easeFactor, scheduled), 1);
+      const reducedEasyBonus = EASY_MULTIPLIER - (EASY_MULTIPLIER - 1) / 2;
+      const easyInterval = roundDays(Math.max(elapsedPositive * base.easeFactor, scheduled) * reducedEasyBonus, 1);
+
+      if (rating === "hard") {
+        return {
+          ...base,
+          ...reviewState(hardInterval, now, {
+            easeFactor: clampEase(base.easeFactor - 0.15),
+          }),
+        };
+      }
+      if (rating === "good") {
+        return { ...base, ...reviewState(goodInterval, now) };
+      }
+      return {
+        ...base,
+        ...reviewState(Math.max(goodInterval + 1, easyInterval), now, {
+          easeFactor: base.easeFactor + 0.15,
+        }),
+      };
+    }
+
+    const hardMinimum = HARD_MULTIPLIER <= 1 ? 0 : scheduledDays + 1;
+    const hardInterval = applyReviewFuzz(scheduledDays * HARD_MULTIPLIER, hardMinimum, cardId, true);
+    const goodMinimum = HARD_MULTIPLIER <= 1 ? scheduledDays + 1 : hardInterval + 1;
+    const goodInterval = applyReviewFuzz((scheduledDays + Math.max(daysLate, 0) / 2) * base.easeFactor, goodMinimum, cardId, true);
+    const easyInterval = applyReviewFuzz((scheduledDays + Math.max(daysLate, 0)) * base.easeFactor * EASY_MULTIPLIER, goodInterval + 1, cardId, true);
+
     if (rating === "hard") {
-      const hardInterval = roundDays(scheduledDays * HARD_MULTIPLIER, scheduledDays + 1);
       return {
         ...base,
         ...reviewState(hardInterval, now, {
@@ -121,18 +222,9 @@ function nextSchedule(state: any, rating: "again" | "hard" | "good" | "easy", no
         }),
       };
     }
-
     if (rating === "good") {
-      const goodInterval = roundDays((scheduledDays + daysLate / 2) * base.easeFactor, scheduledDays + 1);
-      return {
-        ...base,
-        ...reviewState(goodInterval, now),
-      };
+      return { ...base, ...reviewState(goodInterval, now) };
     }
-
-    const hardInterval = roundDays(scheduledDays * HARD_MULTIPLIER, scheduledDays + 1);
-    const goodInterval = roundDays((scheduledDays + daysLate / 2) * base.easeFactor, hardInterval + 1);
-    const easyInterval = roundDays((scheduledDays + daysLate) * base.easeFactor * EASY_MULTIPLIER, goodInterval + 1);
     return {
       ...base,
       ...reviewState(easyInterval, now, {
@@ -141,27 +233,27 @@ function nextSchedule(state: any, rating: "again" | "hard" | "good" | "easy", no
     };
   }
 
-  const isRelearning = current.phase === "relearning";
+  const isRelearning = phase === "relearning";
   const steps = isRelearning ? RELEARNING_STEPS : LEARNING_STEPS;
-  const phase: "learning" | "relearning" = isRelearning ? "relearning" : "learning";
-  const stepIndex = getCurrentStepIndex(current, steps);
-  const currentStep = steps[stepIndex] ?? steps[0] ?? 1;
+  const stepIndex = phase === "new" ? 0 : getCurrentStepIndex(current, steps);
   const nextStep = steps[stepIndex + 1];
 
   if (rating === "again") {
     return {
       ...base,
-      ...learningState(phase, steps[0] ?? 1, 0, now),
+      ...learningState(isRelearning ? "relearning" : "learning", steps[0] ?? 1, 0, now, {
+        interval: isRelearning ? Math.max(1, current.interval ?? 1) : 0,
+      }),
     };
   }
 
   if (rating === "hard") {
-    const hardMinutes = stepIndex === 0 && nextStep
-      ? Math.round(((steps[0] ?? 1) + nextStep) / 2)
-      : currentStep;
+    const hardDelay = getHardLearningDelayMinutes(steps, stepIndex);
     return {
       ...base,
-      ...learningState(phase, hardMinutes, stepIndex, now),
+      ...learningState(isRelearning ? "relearning" : "learning", hardDelay, stepIndex, now, {
+        interval: isRelearning ? Math.max(1, current.interval ?? 1) : 0,
+      }),
     };
   }
 
@@ -169,44 +261,43 @@ function nextSchedule(state: any, rating: "again" | "hard" | "good" | "easy", no
     if (typeof nextStep === "number") {
       return {
         ...base,
-        ...learningState(phase, nextStep, stepIndex + 1, now),
-      };
-    }
-
-    if (isRelearning) {
-      const intervalDays = Math.max(1, current.interval ?? 1);
-      return {
-        ...base,
-        ...reviewState(intervalDays, now),
+        ...learningState(isRelearning ? "relearning" : "learning", nextStep, stepIndex + 1, now, {
+          interval: isRelearning ? Math.max(1, current.interval ?? 1) : 0,
+        }),
       };
     }
 
     return {
       ...base,
-      ...reviewState(GRADUATING_INTERVAL_GOOD, now),
-    };
-  }
-
-  if (isRelearning) {
-    const intervalDays = Math.max(1, (current.interval ?? 1) + 1);
-    return {
-      ...base,
-      ...reviewState(intervalDays, now),
+      ...reviewState(
+        isRelearning
+          ? Math.max(1, current.interval ?? 1)
+          : applyReviewFuzz(GRADUATING_INTERVAL_GOOD, 1, cardId, true),
+        now,
+      ),
     };
   }
 
   return {
     ...base,
-    ...reviewState(GRADUATING_INTERVAL_EASY, now),
+    ...reviewState(
+      isRelearning
+        ? Math.max(Math.max(1, current.interval ?? 1) + 1, 2)
+        : applyReviewFuzz(GRADUATING_INTERVAL_EASY, GRADUATING_INTERVAL_GOOD + 1, cardId, true),
+      now,
+      {
+        easeFactor: base.easeFactor,
+      },
+    ),
   };
 }
 
-function getAnswerPreview(state: any, now: number) {
+function getAnswerPreview(state: any, now: number, cardId: string) {
   return {
-    again: formatDelay(nextSchedule(state, "again", now).dueAt - now),
-    hard: formatDelay(nextSchedule(state, "hard", now).dueAt - now),
-    good: formatDelay(nextSchedule(state, "good", now).dueAt - now),
-    easy: formatDelay(nextSchedule(state, "easy", now).dueAt - now),
+    again: formatDelay(nextSchedule(state, "again", now, cardId).dueAt - now),
+    hard: formatDelay(nextSchedule(state, "hard", now, cardId).dueAt - now),
+    good: formatDelay(nextSchedule(state, "good", now, cardId).dueAt - now),
+    easy: formatDelay(nextSchedule(state, "easy", now, cardId).dueAt - now),
   };
 }
 
@@ -221,10 +312,7 @@ export const listDecks = query({
   args: {},
   handler: async (ctx) => {
     const userId = await requireUser(ctx);
-    const decks = await ctx.db
-      .query("decks")
-      .withIndex("by_user", (q: any) => q.eq("userId", userId))
-      .collect();
+    const decks = await ctx.db.query("decks").withIndex("by_user", (q: any) => q.eq("userId", userId)).collect();
     const cardStates = await ctx.db.query("studyStates").collect();
     const cards = await ctx.db.query("cards").collect();
     const now = Date.now();
@@ -233,16 +321,17 @@ export const listDecks = query({
       .map((deck: any) => {
         const deckCards = cards.filter((card: any) => String(card.deckId) === String(deck._id));
         const deckStates = cardStates.filter((state: any) => String(state.deckId) === String(deck._id));
-        const due = deckStates.filter((state: any) => state.dueAt <= now).length;
+        const due = deckStates.filter((state: any) => state.phase === "new" || state.dueAt <= now).length;
         const reviewing = deckStates.filter((state: any) => state.phase === "review").length;
         const learning = deckStates.filter((state: any) => state.phase === "learning" || state.phase === "relearning").length;
+        const newCards = deckStates.filter((state: any) => state.phase === "new").length;
         return {
           ...deck,
           cardCount: deckCards.length,
           dueCount: due,
           reviewCount: reviewing,
           learningCount: learning,
-          newCount: Math.max(0, deckCards.length - deckStates.length),
+          newCount: newCards,
         };
       })
       .sort((a: any, b: any) => b.updatedAt - a.updatedAt);
@@ -256,25 +345,22 @@ export const getDeck = query({
     const deck = await ctx.db.get(deckId);
     if (!deck || String(deck.userId) !== String(userId)) return null;
 
-    const cards = await ctx.db
-      .query("cards")
-      .withIndex("by_user_deck", (q: any) => q.eq("userId", userId).eq("deckId", deckId))
-      .collect();
-    const states = await ctx.db
-      .query("studyStates")
-      .withIndex("by_user_deck", (q: any) => q.eq("userId", userId).eq("deckId", deckId))
-      .collect();
+    const cards = await ctx.db.query("cards").withIndex("by_user_deck", (q: any) => q.eq("userId", userId).eq("deckId", deckId)).collect();
+    const states = await ctx.db.query("studyStates").withIndex("by_user_deck", (q: any) => q.eq("userId", userId).eq("deckId", deckId)).collect();
     const stateByCard = new Map(states.map((state: any) => [String(state.cardId), state]));
     const now = Date.now();
 
     return {
       deck,
       cards: cards
-        .map((card: any) => ({
-          ...card,
-          state: stateByCard.get(String(card._id)) ?? null,
-          isDue: (stateByCard.get(String(card._id))?.dueAt ?? 0) <= now,
-        }))
+        .map((card: any) => {
+          const state = stateByCard.get(String(card._id)) ?? null;
+          return {
+            ...card,
+            state,
+            isDue: !state || state.phase === "new" || state.dueAt <= now,
+          };
+        })
         .sort((a: any, b: any) => a.front.localeCompare(b.front)),
     };
   },
@@ -287,19 +373,10 @@ export const getStudySession = query({
     const deck = await ctx.db.get(deckId);
     if (!deck || String(deck.userId) !== String(userId)) return null;
     const now = Date.now();
-    const cards = await ctx.db
-      .query("cards")
-      .withIndex("by_user_deck", (q: any) => q.eq("userId", userId).eq("deckId", deckId))
-      .collect();
-    const states = await ctx.db
-      .query("studyStates")
-      .withIndex("by_user_deck", (q: any) => q.eq("userId", userId).eq("deckId", deckId))
-      .collect();
+    const cards = await ctx.db.query("cards").withIndex("by_user_deck", (q: any) => q.eq("userId", userId).eq("deckId", deckId)).collect();
+    const states = await ctx.db.query("studyStates").withIndex("by_user_deck", (q: any) => q.eq("userId", userId).eq("deckId", deckId)).collect();
     const stateByCard = new Map(states.map((state: any) => [String(state.cardId), state]));
-    const sessions = await ctx.db
-      .query("studySessions")
-      .withIndex("by_user_deck", (q: any) => q.eq("userId", userId).eq("deckId", deckId))
-      .collect();
+    const sessions = await ctx.db.query("studySessions").withIndex("by_user_deck", (q: any) => q.eq("userId", userId).eq("deckId", deckId)).collect();
     const session = sessions[0] ?? null;
 
     const enriched = cards.map((card: any) => ({
@@ -307,22 +384,18 @@ export const getStudySession = query({
       state: stateByCard.get(String(card._id)) ?? null,
     }));
     const dueCards = enriched
-      .filter((card: any) => {
-        const dueAt = card.state?.dueAt ?? 0;
-        return card.state ? dueAt <= now : true;
-      })
+      .filter((card: any) => !card.state || card.state.phase === "new" || card.state.dueAt <= now)
       .sort((a: any, b: any) => {
         const queueDelta = queuePriority(a) - queuePriority(b);
         if (queueDelta !== 0) return queueDelta;
         return (a.state?.dueAt ?? 0) - (b.state?.dueAt ?? 0);
       });
 
-    const rawCurrentCard =
-      dueCards.find((card: any) => String(card._id) === String(session?.currentCardId ?? "")) ?? dueCards[0] ?? null;
+    const rawCurrentCard = dueCards.find((card: any) => String(card._id) === String(session?.currentCardId ?? "")) ?? dueCards[0] ?? null;
     const currentCard = rawCurrentCard
       ? {
           ...rawCurrentCard,
-          answerPreview: getAnswerPreview(rawCurrentCard.state, now),
+          answerPreview: getAnswerPreview(rawCurrentCard.state, now, String(rawCurrentCard._id)),
         }
       : null;
 
@@ -417,10 +490,7 @@ export const revealCurrentCard = mutation({
   handler: async (ctx, { deckId, revealed, currentCardId }) => {
     const userId = await requireUser(ctx);
     const now = Date.now();
-    const sessions = await ctx.db
-      .query("studySessions")
-      .withIndex("by_user_deck", (q: any) => q.eq("userId", userId).eq("deckId", deckId))
-      .collect();
+    const sessions = await ctx.db.query("studySessions").withIndex("by_user_deck", (q: any) => q.eq("userId", userId).eq("deckId", deckId)).collect();
     const existing = sessions[0];
     const patch = {
       currentCardId,
@@ -454,22 +524,16 @@ export const answerCard = mutation({
   handler: async (ctx, { deckId, cardId, rating }) => {
     const userId = await requireUser(ctx);
     const now = Date.now();
-    const states = await ctx.db
-      .query("studyStates")
-      .withIndex("by_user_card", (q: any) => q.eq("userId", userId).eq("cardId", cardId))
-      .collect();
+    const states = await ctx.db.query("studyStates").withIndex("by_user_card", (q: any) => q.eq("userId", userId).eq("cardId", cardId)).collect();
     const current = states[0];
     if (!current) throw new Error("Study state missing");
-    const schedule = nextSchedule(current, rating, now);
+    const schedule = nextSchedule(current, rating, now, String(cardId));
     await ctx.db.patch(current._id, {
       ...(schedule as any),
       updatedAt: now,
     });
 
-    const sessions = await ctx.db
-      .query("studySessions")
-      .withIndex("by_user_deck", (q: any) => q.eq("userId", userId).eq("deckId", deckId))
-      .collect();
+    const sessions = await ctx.db.query("studySessions").withIndex("by_user_deck", (q: any) => q.eq("userId", userId).eq("deckId", deckId)).collect();
     const session = sessions[0];
     const day = startOfDayKey(now);
     if (session) {

@@ -19,7 +19,6 @@ jobs:
     runs-on: ubuntu-latest
     env:
       VITE_CONVEX_URL: ${{ vars.VITE_CONVEX_URL }}
-      VITE_ENABLE_GOOGLE_AUTH: ${{ vars.VITE_ENABLE_GOOGLE_AUTH }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4

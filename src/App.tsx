@@ -26,7 +26,6 @@ type CardImport = {
 };
 
 const typedApi = api as any;
-const GOOGLE_AUTH_ENABLED = import.meta.env.VITE_ENABLE_GOOGLE_AUTH === "true";
 
 export default function App() {
   return (
@@ -63,27 +62,8 @@ function Landing() {
       <section className="auth-panel glass">
         <div>
           <h2>{mode === "signIn" ? "Sign in" : "Create account"}</h2>
-          <p className="muted">Use email and password. Google is optional when configured.</p>
+          <p className="muted">Use email and password.</p>
         </div>
-
-        {GOOGLE_AUTH_ENABLED ? (
-          <button
-            className="secondary-button"
-            disabled={busy}
-            onClick={async () => {
-              setBusy(true);
-              setError(null);
-              try {
-                await signIn("google");
-              } catch (err) {
-                setError(err instanceof Error ? err.message : "Google sign-in failed.");
-                setBusy(false);
-              }
-            }}
-          >
-            Continue with Google
-          </button>
-        ) : null}
 
         <form
           className="auth-form"
