@@ -1,0 +1,51 @@
+import { chromium } from '@playwright/test';
+
+const baseUrl = process.env.E2E_BASE_URL ?? 'http://127.0.0.1:4176/';
+const deckName = `E2E Deck ${Date.now()}`;
+
+const browser = await chromium.launch({ headless: true });
+const page = await browser.newPage({ viewport: { width: 1440, height: 1100 } });
+
+try {
+  await page.goto(baseUrl, { waitUntil: 'networkidle', timeout: 120000 });
+  await page.evaluate(() => localStorage.clear());
+  await page.reload({ waitUntil: 'networkidle' });
+
+  await page.getByPlaceholder('Algorithms').fill(deckName);
+  await page.getByPlaceholder('Optional note').fill('E2E deck');
+  await page.getByRole('button', { name: /create deck/i }).click();
+  await page.waitForFunction((name) => document.body.innerText.includes(name), deckName, { timeout: 30000 });
+
+  await page.getByRole('combobox').selectOption('basic_reversed');
+  await page.getByRole('textbox', { name: 'Front', exact: true }).fill('Capital of France');
+  await page.getByRole('textbox', { name: 'Back', exact: true }).fill('Paris');
+  await page.getByRole('button', { name: /add note/i }).click();
+  await page.waitForFunction(() => /2 saved/i.test(document.body.innerText), { timeout: 30000 });
+
+  await page.getByPlaceholder(/front,back,tags/i).fill('front,back,tags\nWhat is TCP?,Transmission Control Protocol,networks');
+  await page.locator('.manage-panel').getByRole('button', { name: /^Import$/i }).click();
+  await page.waitForFunction(() => /3 saved/i.test(document.body.innerText), { timeout: 30000 });
+
+  await page.getByRole('button', { name: /show answer/i }).click();
+  await page.getByRole('button', { name: /^Good/i }).click();
+  await page.waitForTimeout(800);
+  await page.reload({ waitUntil: 'networkidle' });
+
+  const body = await page.locator('body').innerText();
+  const checks = {
+    deckPresent: body.includes(deckName),
+    reversedCardsPresent: /3 saved/i.test(body),
+    reviewLogged: /GOOD/i.test(body),
+    localMode: /single-user local collection/i.test(body),
+    templateLabel: /card 2/i.test(body),
+  };
+
+  if (!Object.values(checks).every(Boolean)) {
+    console.error('Checks failed', checks);
+    process.exitCode = 1;
+  } else {
+    console.log(JSON.stringify({ ok: true, deckName, checks }));
+  }
+} finally {
+  await browser.close();
+}

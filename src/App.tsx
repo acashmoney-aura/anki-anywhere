@@ -3,6 +3,7 @@ import Papa from "papaparse";
 import { AnimatePresence, motion } from "framer-motion";
 import { BookOpen, Download, Import, LoaderCircle, Plus, RotateCcw, Upload } from "lucide-react";
 import {
+  addNote,
   answerCard,
   createDeck,
   exportCollection,
@@ -16,7 +17,7 @@ import {
   resetCollection,
   useCollection,
 } from "./localStore";
-import type { Rating } from "./localStore";
+import type { NoteType, Rating } from "./localStore";
 
 type Deck = ReturnType<typeof listDecks>[number];
 
@@ -150,6 +151,12 @@ function DeckWorkspace({ deckId, summary }: { deckId: string; summary: Deck }) {
   const collection = useCollection();
   const deckData = useMemo(() => getDeck(deckId), [collection, deckId]);
   const study = useMemo(() => getStudySession(deckId), [collection, deckId]);
+  const [noteFront, setNoteFront] = useState("");
+  const [noteBack, setNoteBack] = useState("");
+  const [noteHint, setNoteHint] = useState("");
+  const [noteTags, setNoteTags] = useState("");
+  const [noteType, setNoteType] = useState<NoteType>("basic");
+  const [noteStatus, setNoteStatus] = useState<string | null>(null);
   const [importText, setImportText] = useState("");
   const [importStatus, setImportStatus] = useState<string | null>(null);
 
@@ -254,6 +261,48 @@ function DeckWorkspace({ deckId, summary }: { deckId: string; summary: Deck }) {
         <section className="manage-panel">
           <div className="glass import-panel">
             <div className="section-title">
+              <span><Plus size={18} /> Add note</span>
+            </div>
+            <p className="muted small">Basic note types, including a reversed-card option.</p>
+            <select value={noteType} onChange={(e) => setNoteType(e.target.value as NoteType)}>
+              <option value="basic">Basic</option>
+              <option value="basic_reversed">Basic (and reversed card)</option>
+            </select>
+            <textarea value={noteFront} onChange={(e) => setNoteFront(e.target.value)} rows={4} placeholder="Front" />
+            <textarea value={noteBack} onChange={(e) => setNoteBack(e.target.value)} rows={4} placeholder="Back" />
+            <input value={noteHint} onChange={(e) => setNoteHint(e.target.value)} placeholder="Optional hint" />
+            <input value={noteTags} onChange={(e) => setNoteTags(e.target.value)} placeholder="Comma-separated tags" />
+            <div className="inline-actions mobile-stack">
+              <button
+                className="primary-button"
+                onClick={() => {
+                  try {
+                    if (!noteFront.trim() || !noteBack.trim()) throw new Error("Front and back are required.");
+                    addNote(deckId, {
+                      front: noteFront,
+                      back: noteBack,
+                      hint: noteHint || undefined,
+                      tags: noteTags.split(",").map((tag) => tag.trim()).filter(Boolean),
+                      noteType,
+                    });
+                    setNoteStatus(noteType === "basic_reversed" ? "Added note with 2 cards." : "Added note.");
+                    setNoteFront("");
+                    setNoteBack("");
+                    setNoteHint("");
+                    setNoteTags("");
+                  } catch (error) {
+                    setNoteStatus(error instanceof Error ? error.message : "Could not add note.");
+                  }
+                }}
+              >
+                Add note
+              </button>
+            </div>
+            {noteStatus ? <div className="info-banner">{noteStatus}</div> : null}
+          </div>
+
+          <div className="glass import-panel">
+            <div className="section-title">
               <span><Import size={18} /> Import cards</span>
             </div>
             <p className="muted small">CSV, TSV, JSON, or front::back::tags.</p>
@@ -298,7 +347,7 @@ function DeckWorkspace({ deckId, summary }: { deckId: string; summary: Deck }) {
                     <strong>{card.front}</strong>
                     <p>{card.back}</p>
                   </div>
-                  <span className={`phase-tag ${card.state?.phase ?? "new"}`}>{card.state?.phase ?? "new"}</span>
+                  <span className={`phase-tag ${card.state?.phase ?? "new"}`}>{card.templateOrdinal ? `card ${card.templateOrdinal + 1} · ` : ""}{card.state?.phase ?? "new"}</span>
                 </div>
               ))}
             </div>

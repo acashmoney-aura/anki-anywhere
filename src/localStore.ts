@@ -113,6 +113,8 @@ export type CardImport = {
   templateOrdinal?: number;
 };
 
+export type NoteType = "basic" | "basic_reversed";
+
 type Collection = {
   version: 1;
   viewer: { name: string; email: string };
@@ -548,6 +550,73 @@ export function getStudySession(deckId: string) {
   };
 }
 
+function insertCard(collection: Collection, deck: Deck, now: number, deckId: string, card: CardImport, noteId: string, templateOrdinal: number) {
+  const cardId = makeId("card");
+  collection.cards.push({
+    _id: cardId,
+    userId: "local-user",
+    deckId,
+    noteId,
+    templateOrdinal,
+    front: card.front.trim(),
+    back: card.back.trim(),
+    hint: card.hint?.trim() || undefined,
+    tags: card.tags?.filter(Boolean).map((tag) => tag.trim()) ?? [],
+    source: card.source?.trim() || undefined,
+    createdAt: now,
+    updatedAt: now,
+  });
+  collection.studyStates.push({
+    _id: makeId("state"),
+    userId: "local-user",
+    deckId,
+    cardId,
+    phase: "new",
+    dueAt: 0,
+    dueDay: undefined,
+    interval: 0,
+    easeFactor: deck.config.initialEaseFactor,
+    reps: 0,
+    lapses: 0,
+    stepIndex: 0,
+    buriedUntilDay: undefined,
+    buriedReason: undefined,
+    createdAt: now,
+    updatedAt: now,
+  });
+}
+
+export function addNote(deckId: string, note: { front: string; back: string; hint?: string; tags?: string[]; source?: string; noteType?: NoteType }) {
+  const now = Date.now();
+  const noteType = note.noteType ?? "basic";
+  updateCollection((collection) => {
+    const deck = collection.decks.find((item) => item._id === deckId);
+    if (!deck) throw new Error("Deck not found");
+    const noteId = `note:${now}:${Math.random().toString(36).slice(2, 8)}`;
+    insertCard(collection, deck, now, deckId, { ...note, noteId, templateOrdinal: 0 }, noteId, 0);
+    if (noteType === "basic_reversed") {
+      insertCard(
+        collection,
+        deck,
+        now,
+        deckId,
+        {
+          front: note.back,
+          back: note.front,
+          hint: note.hint,
+          tags: note.tags,
+          source: note.source,
+          noteId,
+          templateOrdinal: 1,
+        },
+        noteId,
+        1,
+      );
+    }
+    deck.updatedAt = now;
+  });
+}
+
 export function importCards(deckId: string, cards: CardImport[]) {
   const now = Date.now();
   updateCollection((collection) => {
@@ -555,9 +624,7 @@ export function importCards(deckId: string, cards: CardImport[]) {
     if (!deck) throw new Error("Deck not found");
     for (const [index, card] of cards.entries()) {
       const noteId = card.noteId?.trim() || `note:${now}:${index}:${Math.random().toString(36).slice(2, 8)}`;
-      const cardId = makeId("card");
-      collection.cards.push({ _id: cardId, userId: "local-user", deckId, noteId, templateOrdinal: card.templateOrdinal ?? 0, front: card.front.trim(), back: card.back.trim(), hint: card.hint?.trim() || undefined, tags: card.tags?.filter(Boolean).map((tag) => tag.trim()) ?? [], source: card.source?.trim() || undefined, createdAt: now, updatedAt: now });
-      collection.studyStates.push({ _id: makeId("state"), userId: "local-user", deckId, cardId, phase: "new", dueAt: 0, dueDay: undefined, interval: 0, easeFactor: deck.config.initialEaseFactor, reps: 0, lapses: 0, stepIndex: 0, buriedUntilDay: undefined, buriedReason: undefined, createdAt: now, updatedAt: now });
+      insertCard(collection, deck, now, deckId, card, noteId, card.templateOrdinal ?? 0);
     }
     deck.updatedAt = now;
   });

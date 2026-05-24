@@ -7,6 +7,7 @@ A local-first Anki-style flashcard app for web + mobile.
 - browser-local collection persistence (no account required)
 - resumable study sessions
 - collection export/import as JSON
+- basic note types, including `Basic` and `Basic (and reversed card)`
 - imports from CSV / TSV / JSON / `front::back::tags`
 - `Again / Hard / Good / Easy` scheduling tuned closely to classic Anki defaults
 
@@ -24,6 +25,14 @@ npm run dev:frontend
 ```
 
 No backend setup is required for the current local-first version.
+
+## Smoke test
+
+```bash
+npm run build
+npm run preview -- --host 127.0.0.1 --port 4176
+E2E_BASE_URL=http://127.0.0.1:4176/ npm run test:e2e
+```
 
 ## GitHub Pages deploy
 
