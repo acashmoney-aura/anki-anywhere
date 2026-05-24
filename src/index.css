@@ -62,6 +62,9 @@ code { background: rgba(148, 163, 184, 0.16); padding: 0.15rem 0.4rem; border-ra
   gap: 16px;
   margin-top: 28px;
 }
+.simple-grid .feature-card {
+  min-height: 100%;
+}
 .feature-card {
   padding: 18px;
   border-radius: 22px;
@@ -84,13 +87,19 @@ input, textarea {
   background: rgba(15, 23, 42, 0.82); color: #f8fafc; resize: vertical;
 }
 input::placeholder, textarea::placeholder { color: #64748b; }
-.primary-button, .text-button, .icon-button, .deck-row, .rating-button {
+.primary-button, .secondary-button, .text-button, .icon-button, .deck-row, .rating-button {
   border: 0; transition: transform 140ms ease, opacity 140ms ease, background 140ms ease;
 }
 .primary-button {
   display: inline-flex; align-items: center; justify-content: center; gap: 10px;
   background: linear-gradient(135deg, #60a5fa, #8b5cf6); color: white; padding: 14px 18px; border-radius: 16px;
   font-weight: 700;
+}
+.secondary-button {
+  display: inline-flex; align-items: center; justify-content: center; gap: 10px;
+  background: rgba(30, 41, 59, 0.8); color: white; padding: 14px 18px; border-radius: 16px;
+  font-weight: 700;
+  border: 1px solid rgba(148, 163, 184, 0.16);
 }
 .primary-button:hover, .rating-button:hover, .deck-row:hover, .icon-button:hover { transform: translateY(-1px); }
 .primary-button.big { width: 100%; padding: 16px 18px; font-size: 1rem; }
@@ -120,6 +129,9 @@ input::placeholder, textarea::placeholder { color: #64748b; }
 .deck-row {
   display: flex; align-items: center; justify-content: space-between; width: 100%; text-align: left;
   padding: 16px; border-radius: 18px; background: rgba(15, 23, 42, 0.6); color: white;
+}
+.compact-landing .hero-panel h1 {
+  font-size: clamp(2.7rem, 7vw, 4.4rem);
 }
 .deck-row span { display: block; color: #94a3b8; font-size: 0.9rem; margin-top: 4px; }
 .deck-row.active { background: linear-gradient(135deg, rgba(59, 130, 246, 0.28), rgba(139, 92, 246, 0.28)); }
@@ -180,6 +192,6 @@ input::placeholder, textarea::placeholder { color: #64748b; }
   .hero-panel, .auth-panel, .sidebar, .workspace-header, .study-panel, .import-panel, .library-panel, .empty-state { padding: 20px; border-radius: 22px; }
   .flashcard { min-height: 280px; padding: 22px; }
   .review-grid { grid-template-columns: 1fr 1fr; }
-  .card-meta, .workspace-header, .study-topbar, .section-title, .inline-actions, .sidebar-header { flex-direction: column; align-items: flex-start; }
+  .card-meta, .workspace-header, .study-topbar, .section-title, .inline-actions, .sidebar-header, .mobile-stack { flex-direction: column; align-items: flex-start; }
   .stat-pills { width: 100%; }
 }

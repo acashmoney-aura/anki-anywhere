@@ -3,18 +3,7 @@ import Papa from "papaparse";
 import { AnimatePresence, motion } from "framer-motion";
 import { Authenticated, Unauthenticated, useMutation, useQuery } from "convex/react";
 import { useAuthActions, useConvexAuth } from "@convex-dev/auth/react";
-import {
-  BookOpen,
-  Brain,
-  ChevronRight,
-  Cloud,
-  Import,
-  Layers,
-  LoaderCircle,
-  LogOut,
-  Plus,
-  Sparkles,
-} from "lucide-react";
+import { BookOpen, Import, LoaderCircle, LogOut, Plus } from "lucide-react";
 import { api } from "../convex/_generated/api";
 
 type Deck = {
@@ -37,6 +26,7 @@ type CardImport = {
 };
 
 const typedApi = api as any;
+const GOOGLE_AUTH_ENABLED = import.meta.env.VITE_ENABLE_GOOGLE_AUTH === "true";
 
 export default function App() {
   return (
@@ -58,24 +48,43 @@ function Landing() {
   const [busy, setBusy] = useState(false);
 
   return (
-    <main className="landing">
+    <main className="landing compact-landing">
       <section className="hero-panel glass">
-        <div className="eyebrow"><Sparkles size={16} /> Anki-style spaced repetition, rebuilt for web + mobile</div>
+        <div className="eyebrow">Anki-style review</div>
         <h1>Anki Anywhere</h1>
-        <p>
-          Beautiful study sessions, per-user cloud sync, persistent progress, and a Convex backend so you can pick up exactly where you left off.
-        </p>
-        <div className="hero-grid">
-          <Feature icon={<Brain size={18} />} title="Real review flow" text="Again, Hard, Good, Easy with persistent scheduling and resumable sessions." />
-          <Feature icon={<Cloud size={18} />} title="Cloud synced" text="Your decks, cards, and study state live in Convex and follow you across devices." />
-          <Feature icon={<Layers size={18} />} title="Import fast" text="Paste TSV / CSV / JSON flashcards or upload exported rows from anywhere." />
+        <p>Study on web or mobile. Import cards. Pick up where you left off.</p>
+        <div className="hero-grid simple-grid">
+          <Feature title="Real intervals" text="Again, Hard, Good, Easy with Anki-style defaults." />
+          <Feature title="Synced" text="Decks and progress stay with your account." />
+          <Feature title="Import" text="CSV, TSV, JSON, or front::back::tags." />
         </div>
       </section>
+
       <section className="auth-panel glass">
         <div>
-          <h2>{mode === "signIn" ? "Welcome back" : "Create your study account"}</h2>
-          <p className="muted">Password auth via Convex Auth. Simple and boring — exactly how auth should feel.</p>
+          <h2>{mode === "signIn" ? "Sign in" : "Create account"}</h2>
+          <p className="muted">Use email and password. Google is optional when configured.</p>
         </div>
+
+        {GOOGLE_AUTH_ENABLED ? (
+          <button
+            className="secondary-button"
+            disabled={busy}
+            onClick={async () => {
+              setBusy(true);
+              setError(null);
+              try {
+                await signIn("google");
+              } catch (err) {
+                setError(err instanceof Error ? err.message : "Google sign-in failed.");
+                setBusy(false);
+              }
+            }}
+          >
+            Continue with Google
+          </button>
+        ) : null}
+
         <form
           className="auth-form"
           onSubmit={async (event) => {
@@ -105,8 +114,9 @@ function Landing() {
             {mode === "signIn" ? "Sign in" : "Create account"}
           </button>
         </form>
+
         {error ? <div className="error-banner">{error}</div> : null}
-        <button className="text-button" onClick={() => setMode(mode === "signIn" ? "signUp" : "signIn")}> 
+        <button className="text-button" onClick={() => setMode(mode === "signIn" ? "signUp" : "signIn")}>
           {mode === "signIn" ? "Need an account? Sign up" : "Already have an account? Sign in"}
         </button>
       </section>
@@ -138,7 +148,7 @@ function Dashboard() {
       <aside className="sidebar glass">
         <div className="sidebar-header">
           <div>
-            <div className="eyebrow">Signed in as</div>
+            <div className="eyebrow">Signed in</div>
             <strong>{viewer?.name ?? viewer?.email ?? "Learner"}</strong>
           </div>
           <button className="icon-button" onClick={() => void signOut()} aria-label="Sign out">
@@ -149,7 +159,7 @@ function Dashboard() {
         <div className="create-deck-card">
           <h3>New deck</h3>
           <input value={newDeckTitle} onChange={(e) => setNewDeckTitle(e.target.value)} placeholder="Algorithms" />
-          <textarea value={newDeckDescription} onChange={(e) => setNewDeckDescription(e.target.value)} placeholder="Interview prep, OS, DP, graphs..." rows={3} />
+          <textarea value={newDeckDescription} onChange={(e) => setNewDeckDescription(e.target.value)} placeholder="Optional note" rows={3} />
           <button
             className="primary-button"
             onClick={async () => {
@@ -175,7 +185,6 @@ function Dashboard() {
                 <strong>{deck.title}</strong>
                 <span>{deck.cardCount} cards · {deck.dueCount} due</span>
               </div>
-              <ChevronRight size={16} />
             </button>
           ))}
         </div>
@@ -208,9 +217,9 @@ function DeckWorkspace({ deckId, summary }: { deckId: string; summary: Deck }) {
     <div className="workspace-stack">
       <header className="workspace-header glass">
         <div>
-          <div className="eyebrow">Deck workspace</div>
+          <div className="eyebrow">Deck</div>
           <h2>{summary.title}</h2>
-          <p className="muted">{summary.description || "No description yet. Import some cards and start drilling."}</p>
+          <p className="muted">{summary.description || "No description."}</p>
         </div>
         <div className="stat-pills">
           <span>{study.dueCounts.new} new</span>
@@ -224,10 +233,10 @@ function DeckWorkspace({ deckId, summary }: { deckId: string; summary: Deck }) {
         <section className="study-panel glass">
           <div className="study-topbar">
             <div>
-              <div className="eyebrow">Study now</div>
-              <strong>{study.dueCounts.due ? `${study.dueCounts.due} card${study.dueCounts.due === 1 ? "" : "s"} ready` : "All caught up"}</strong>
+              <div className="eyebrow">Study</div>
+              <strong>{study.dueCounts.due ? `${study.dueCounts.due} due` : "Done for now"}</strong>
             </div>
-            <span className="progress-chip">Reviewed today: {study.streak}</span>
+            <span className="progress-chip">Today: {study.streak}</span>
           </div>
 
           {currentCard ? (
@@ -260,10 +269,10 @@ function DeckWorkspace({ deckId, summary }: { deckId: string; summary: Deck }) {
               ) : (
                 <div className="review-grid">
                   {[
-                    ["again", "Again", "1m"],
-                    ["hard", "Hard", currentCard.state?.phase === "review" ? "~harder" : "5m"],
-                    ["good", "Good", currentCard.state?.phase === "review" ? "~next interval" : "10m/1d"],
-                    ["easy", "Easy", currentCard.state?.phase === "review" ? "~longer" : "4d"],
+                    ["again", "Again", currentCard.answerPreview?.again],
+                    ["hard", "Hard", currentCard.answerPreview?.hard],
+                    ["good", "Good", currentCard.answerPreview?.good],
+                    ["easy", "Easy", currentCard.answerPreview?.easy],
                   ].map(([value, label, hint]) => (
                     <button
                       key={value}
@@ -279,8 +288,8 @@ function DeckWorkspace({ deckId, summary }: { deckId: string; summary: Deck }) {
             </>
           ) : (
             <div className="empty-study glass-inner">
-              <h3>No cards due 🎉</h3>
-              <p>Your deck is synced and saved. Come back later and your schedule will still be here.</p>
+              <h3>No cards due</h3>
+              <p>You can close the app. Your progress is saved.</p>
             </div>
           )}
 
@@ -297,18 +306,16 @@ function DeckWorkspace({ deckId, summary }: { deckId: string; summary: Deck }) {
         <section className="manage-panel">
           <div className="glass import-panel">
             <div className="section-title">
-              <Import size={18} /> Import cards
+              <span><Import size={18} /> Import cards</span>
             </div>
-            <p className="muted small">
-              Paste CSV / TSV / JSON. Supported columns: <code>front</code>, <code>back</code>, optional <code>hint</code>, <code>tags</code>, <code>source</code>.
-            </p>
+            <p className="muted small">CSV, TSV, JSON, or front::back::tags.</p>
             <textarea
               value={importText}
               onChange={(e) => setImportText(e.target.value)}
               rows={9}
               placeholder={'front,back,tags\n"TCP handshake","SYN → SYN-ACK → ACK","networks"'}
             />
-            <div className="inline-actions">
+            <div className="inline-actions mobile-stack">
               <button
                 className="primary-button"
                 onClick={async () => {
@@ -322,19 +329,19 @@ function DeckWorkspace({ deckId, summary }: { deckId: string; summary: Deck }) {
                   }
                 }}
               >
-                Import into deck
+                Import
               </button>
-              <span className="muted small">One row per note. Works on mobile too.</span>
+              <span className="muted small">One row per note.</span>
             </div>
             {importStatus ? <div className="info-banner">{importStatus}</div> : null}
           </div>
 
           <div className="glass library-panel">
-            <div className="section-title">Deck library</div>
+            <div className="section-title">Cards</div>
             <div className="library-meta">
-              <span>{deckData.cards.length} cards saved</span>
-              <span>{deckData.cards.filter((card: any) => card.state?.phase === "review").length} in review</span>
-              <span>{deckData.cards.filter((card: any) => card.isDue).length} due now</span>
+              <span>{deckData.cards.length} saved</span>
+              <span>{deckData.cards.filter((card: any) => card.state?.phase === "review").length} review</span>
+              <span>{deckData.cards.filter((card: any) => card.isDue).length} due</span>
             </div>
             <div className="card-list">
               {deckData.cards.slice(0, 100).map((card: any) => (
@@ -354,10 +361,9 @@ function DeckWorkspace({ deckId, summary }: { deckId: string; summary: Deck }) {
   );
 }
 
-function Feature({ icon, title, text }: { icon: React.ReactNode; title: string; text: string }) {
+function Feature({ title, text }: { title: string; text: string }) {
   return (
     <div className="feature-card">
-      <div className="feature-icon">{icon}</div>
       <strong>{title}</strong>
       <p>{text}</p>
     </div>
@@ -368,7 +374,7 @@ function EmptyState() {
   return (
     <div className="empty-state glass">
       <h2>No deck selected</h2>
-      <p>Create a deck on the left, dump in a batch of flashcards, and start studying.</p>
+      <p>Create a deck and start importing cards.</p>
     </div>
   );
 }

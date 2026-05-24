@@ -4,10 +4,20 @@ import { v } from "convex/values";
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 const MINUTE_MS = 60 * 1000;
-const learningSteps = [1 * MINUTE_MS, 10 * MINUTE_MS];
 
-async function requireUser(ctx: { auth: any; db: any }) {
-  const userId = await getAuthUserId(ctx as any);
+const LEARNING_STEPS = [1, 10];
+const RELEARNING_STEPS = [10];
+const INITIAL_EASE_FACTOR = 2.5;
+const MINIMUM_EASE_FACTOR = 1.3;
+const HARD_MULTIPLIER = 1.2;
+const EASY_MULTIPLIER = 1.3;
+const LAPSE_MULTIPLIER = 0.0;
+const MINIMUM_LAPSE_INTERVAL = 1;
+const GRADUATING_INTERVAL_GOOD = 1;
+const GRADUATING_INTERVAL_EASY = 4;
+
+async function requireUser(ctx: { auth: unknown; db: unknown }) {
+  const userId = await getAuthUserId(ctx as never);
   if (!userId) {
     throw new Error("Not authenticated");
   }
@@ -18,90 +28,193 @@ function startOfDayKey(ts: number) {
   return new Date(ts).toISOString().slice(0, 10);
 }
 
+function clampEase(easeFactor: number) {
+  return Math.max(MINIMUM_EASE_FACTOR, easeFactor);
+}
+
+function roundDays(interval: number, minimum: number) {
+  return Math.max(minimum, Math.round(interval));
+}
+
+function formatDelay(ms: number) {
+  if (ms % DAY_MS === 0) {
+    const days = ms / DAY_MS;
+    return `${days}d`;
+  }
+  const minutes = Math.round(ms / MINUTE_MS);
+  if (minutes >= 60) {
+    const hours = Math.round(minutes / 60);
+    return `${hours}h`;
+  }
+  return `${minutes}m`;
+}
+
+function getCurrentStepIndex(state: any, steps: number[]) {
+  const raw = typeof state?.stepIndex === "number" ? state.stepIndex : 0;
+  return Math.max(0, Math.min(raw, Math.max(steps.length - 1, 0)));
+}
+
+function learningState(phase: "learning" | "relearning", intervalMinutes: number, stepIndex: number, now: number, overrides: Record<string, unknown> = {}) {
+  return {
+    phase,
+    interval: 0,
+    stepIndex,
+    dueAt: now + intervalMinutes * MINUTE_MS,
+    ...overrides,
+  };
+}
+
+function reviewState(intervalDays: number, now: number, overrides: Record<string, unknown> = {}) {
+  return {
+    phase: "review",
+    interval: intervalDays,
+    stepIndex: undefined,
+    dueAt: now + intervalDays * DAY_MS,
+    ...overrides,
+  };
+}
+
 function nextSchedule(state: any, rating: "again" | "hard" | "good" | "easy", now: number) {
   const current = state ?? {
     phase: "new",
     interval: 0,
-    easeFactor: 2.5,
+    easeFactor: INITIAL_EASE_FACTOR,
     reps: 0,
     lapses: 0,
     stepIndex: 0,
   };
-  let phase = current.phase;
-  let interval = current.interval ?? 0;
-  let easeFactor = Math.max(1.3, Math.min(3.0, current.easeFactor ?? 2.5));
-  const reps = current.reps ?? 0;
-  let lapses = current.lapses ?? 0;
-  let stepIndex = current.stepIndex ?? 0;
-  let dueAt = now;
 
-  const graduate = (days: number, nextEase = easeFactor) => {
-    phase = "review";
-    interval = Math.max(1, Math.round(days));
-    easeFactor = Math.max(1.3, Math.min(3.0, nextEase));
-    stepIndex = undefined as unknown as number;
-    dueAt = now + interval * DAY_MS;
-  };
-
-  if (phase === "new" || phase === "learning" || phase === "relearning") {
-    if (rating === "again") {
-      phase = phase === "relearning" ? "relearning" : "learning";
-      stepIndex = 0;
-      dueAt = now + learningSteps[0];
-      interval = 0;
-      easeFactor = Math.max(1.3, easeFactor - 0.2);
-      if (current.phase === "review") lapses += 1;
-    } else if (rating === "hard") {
-      phase = phase === "relearning" ? "relearning" : "learning";
-      stepIndex = Math.min(stepIndex, learningSteps.length - 1);
-      dueAt = now + 5 * MINUTE_MS;
-      easeFactor = Math.max(1.3, easeFactor - 0.15);
-    } else if (rating === "good") {
-      if (stepIndex >= learningSteps.length - 1) {
-        graduate(1);
-      } else {
-        phase = phase === "relearning" ? "relearning" : "learning";
-        stepIndex += 1;
-        dueAt = now + learningSteps[stepIndex];
-      }
-    } else {
-      graduate(4, easeFactor + 0.15);
-    }
-  }
-
-  if (current.phase === "review") {
-    if (rating === "again") {
-      phase = "relearning";
-      stepIndex = 0;
-      lapses += 1;
-      interval = Math.max(1, Math.round(interval * 0.5));
-      easeFactor = Math.max(1.3, easeFactor - 0.2);
-      dueAt = now + 10 * MINUTE_MS;
-    } else if (rating === "hard") {
-      easeFactor = Math.max(1.3, easeFactor - 0.15);
-      interval = Math.max(interval + 1, Math.round(interval * 1.2));
-      dueAt = now + interval * DAY_MS;
-    } else if (rating === "good") {
-      interval = Math.max(interval + 1, Math.round(interval * easeFactor));
-      dueAt = now + interval * DAY_MS;
-    } else {
-      easeFactor = Math.min(3, easeFactor + 0.15);
-      interval = Math.max(interval + 2, Math.round(interval * easeFactor * 1.3));
-      dueAt = now + interval * DAY_MS;
-    }
-  }
-
-  return {
-    phase,
-    interval,
-    easeFactor,
-    reps: reps + 1,
-    lapses,
-    stepIndex: Number.isFinite(stepIndex) ? stepIndex : undefined,
-    dueAt,
+  const base = {
+    easeFactor: clampEase(current.easeFactor ?? INITIAL_EASE_FACTOR),
+    reps: (current.reps ?? 0) + 1,
+    lapses: current.lapses ?? 0,
     lastReviewedAt: now,
     lastRating: rating,
   };
+
+  if (current.phase === "review") {
+    const scheduledDays = Math.max(1, current.interval ?? 1);
+    const elapsedDays = current.lastReviewedAt
+      ? Math.max(0, Math.floor((now - current.lastReviewedAt) / DAY_MS))
+      : scheduledDays;
+    const daysLate = Math.max(0, elapsedDays - scheduledDays);
+
+    if (rating === "again") {
+      const lapses = base.lapses + 1;
+      const lapseInterval = roundDays(Math.max(1, scheduledDays) * LAPSE_MULTIPLIER, MINIMUM_LAPSE_INTERVAL);
+      return {
+        ...base,
+        ...learningState("relearning", RELEARNING_STEPS[0], 0, now, {
+          easeFactor: clampEase(base.easeFactor - 0.2),
+          lapses,
+          interval: lapseInterval,
+        }),
+      };
+    }
+
+    if (rating === "hard") {
+      const hardInterval = roundDays(scheduledDays * HARD_MULTIPLIER, scheduledDays + 1);
+      return {
+        ...base,
+        ...reviewState(hardInterval, now, {
+          easeFactor: clampEase(base.easeFactor - 0.15),
+        }),
+      };
+    }
+
+    if (rating === "good") {
+      const goodInterval = roundDays((scheduledDays + daysLate / 2) * base.easeFactor, scheduledDays + 1);
+      return {
+        ...base,
+        ...reviewState(goodInterval, now),
+      };
+    }
+
+    const hardInterval = roundDays(scheduledDays * HARD_MULTIPLIER, scheduledDays + 1);
+    const goodInterval = roundDays((scheduledDays + daysLate / 2) * base.easeFactor, hardInterval + 1);
+    const easyInterval = roundDays((scheduledDays + daysLate) * base.easeFactor * EASY_MULTIPLIER, goodInterval + 1);
+    return {
+      ...base,
+      ...reviewState(easyInterval, now, {
+        easeFactor: base.easeFactor + 0.15,
+      }),
+    };
+  }
+
+  const isRelearning = current.phase === "relearning";
+  const steps = isRelearning ? RELEARNING_STEPS : LEARNING_STEPS;
+  const phase: "learning" | "relearning" = isRelearning ? "relearning" : "learning";
+  const stepIndex = getCurrentStepIndex(current, steps);
+  const currentStep = steps[stepIndex] ?? steps[0] ?? 1;
+  const nextStep = steps[stepIndex + 1];
+
+  if (rating === "again") {
+    return {
+      ...base,
+      ...learningState(phase, steps[0] ?? 1, 0, now),
+    };
+  }
+
+  if (rating === "hard") {
+    const hardMinutes = stepIndex === 0 && nextStep
+      ? Math.round(((steps[0] ?? 1) + nextStep) / 2)
+      : currentStep;
+    return {
+      ...base,
+      ...learningState(phase, hardMinutes, stepIndex, now),
+    };
+  }
+
+  if (rating === "good") {
+    if (typeof nextStep === "number") {
+      return {
+        ...base,
+        ...learningState(phase, nextStep, stepIndex + 1, now),
+      };
+    }
+
+    if (isRelearning) {
+      const intervalDays = Math.max(1, current.interval ?? 1);
+      return {
+        ...base,
+        ...reviewState(intervalDays, now),
+      };
+    }
+
+    return {
+      ...base,
+      ...reviewState(GRADUATING_INTERVAL_GOOD, now),
+    };
+  }
+
+  if (isRelearning) {
+    const intervalDays = Math.max(1, (current.interval ?? 1) + 1);
+    return {
+      ...base,
+      ...reviewState(intervalDays, now),
+    };
+  }
+
+  return {
+    ...base,
+    ...reviewState(GRADUATING_INTERVAL_EASY, now),
+  };
+}
+
+function getAnswerPreview(state: any, now: number) {
+  return {
+    again: formatDelay(nextSchedule(state, "again", now).dueAt - now),
+    hard: formatDelay(nextSchedule(state, "hard", now).dueAt - now),
+    good: formatDelay(nextSchedule(state, "good", now).dueAt - now),
+    easy: formatDelay(nextSchedule(state, "easy", now).dueAt - now),
+  };
+}
+
+function queuePriority(card: any) {
+  const phase = card.state?.phase;
+  if (phase === "learning" || phase === "relearning") return 0;
+  if (phase === "review") return 1;
+  return 2;
 }
 
 export const listDecks = query({
@@ -199,23 +312,26 @@ export const getStudySession = query({
         return card.state ? dueAt <= now : true;
       })
       .sort((a: any, b: any) => {
-        const aState = a.state;
-        const bState = b.state;
-        const aBucket = aState ? (aState.phase === "review" ? 1 : 0) : -1;
-        const bBucket = bState ? (bState.phase === "review" ? 1 : 0) : -1;
-        if (aBucket !== bBucket) return aBucket - bBucket;
-        return (aState?.dueAt ?? 0) - (bState?.dueAt ?? 0);
+        const queueDelta = queuePriority(a) - queuePriority(b);
+        if (queueDelta !== 0) return queueDelta;
+        return (a.state?.dueAt ?? 0) - (b.state?.dueAt ?? 0);
       });
 
-    const currentCard =
+    const rawCurrentCard =
       dueCards.find((card: any) => String(card._id) === String(session?.currentCardId ?? "")) ?? dueCards[0] ?? null;
+    const currentCard = rawCurrentCard
+      ? {
+          ...rawCurrentCard,
+          answerPreview: getAnswerPreview(rawCurrentCard.state, now),
+        }
+      : null;
 
     return {
       deck,
       session,
       dueCounts: {
         due: dueCards.length,
-        new: enriched.filter((card: any) => !card.state).length,
+        new: enriched.filter((card: any) => card.state?.phase === "new").length,
         learning: enriched.filter((card: any) => ["learning", "relearning"].includes(card.state?.phase)).length,
         review: enriched.filter((card: any) => card.state?.phase === "review" && card.state?.dueAt <= now).length,
       },
@@ -283,9 +399,10 @@ export const importCards = mutation({
         phase: "new",
         dueAt: 0,
         interval: 0,
-        easeFactor: 2.5,
+        easeFactor: INITIAL_EASE_FACTOR,
         reps: 0,
         lapses: 0,
+        stepIndex: 0,
         createdAt: now,
         updatedAt: now,
       });
@@ -345,7 +462,7 @@ export const answerCard = mutation({
     if (!current) throw new Error("Study state missing");
     const schedule = nextSchedule(current, rating, now);
     await ctx.db.patch(current._id, {
-      ...schedule,
+      ...(schedule as any),
       updatedAt: now,
     });
 
