@@ -2,6 +2,24 @@ import { authTables } from "@convex-dev/auth/server";
 import { defineSchema, defineTable } from "convex/server";
 import { v } from "convex/values";
 
+const deckConfig = v.object({
+  learnSteps: v.array(v.number()),
+  relearnSteps: v.array(v.number()),
+  graduatingIntervalGood: v.number(),
+  graduatingIntervalEasy: v.number(),
+  initialEaseFactor: v.number(),
+  minimumEaseFactor: v.number(),
+  hardMultiplier: v.number(),
+  easyMultiplier: v.number(),
+  lapseMultiplier: v.number(),
+  minimumLapseInterval: v.number(),
+  maximumReviewInterval: v.number(),
+  newCardsPerDay: v.number(),
+  reviewsPerDay: v.number(),
+  buryNew: v.boolean(),
+  buryReviews: v.boolean(),
+});
+
 export default defineSchema({
   ...authTables,
   users: defineTable({
@@ -13,6 +31,7 @@ export default defineSchema({
     userId: v.id("users"),
     title: v.string(),
     description: v.optional(v.string()),
+    config: deckConfig,
     createdAt: v.number(),
     updatedAt: v.number(),
   })
@@ -59,10 +78,30 @@ export default defineSchema({
     deckId: v.id("decks"),
     currentCardId: v.optional(v.id("cards")),
     revealed: v.boolean(),
+    revealedAt: v.optional(v.number()),
     reviewedToday: v.number(),
     lastStudiedDay: v.string(),
     startedAt: v.number(),
     updatedAt: v.number(),
   })
     .index("by_user_deck", ["userId", "deckId"]),
+  reviewLogs: defineTable({
+    userId: v.id("users"),
+    deckId: v.id("decks"),
+    cardId: v.id("cards"),
+    rating: v.union(v.literal("again"), v.literal("hard"), v.literal("good"), v.literal("easy")),
+    reviewKind: v.union(
+      v.literal("learning"),
+      v.literal("review"),
+      v.literal("relearning"),
+      v.literal("filtered"),
+    ),
+    interval: v.number(),
+    lastInterval: v.number(),
+    easeFactor: v.number(),
+    takenMillis: v.number(),
+    createdAt: v.number(),
+  })
+    .index("by_user_deck", ["userId", "deckId"])
+    .index("by_user_card", ["userId", "cardId"]),
 });

@@ -4,21 +4,28 @@ import { v } from "convex/values";
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 const MINUTE_MS = 60 * 1000;
-const MAX_REVIEW_INTERVAL = 36500;
-
-const LEARNING_STEPS = [1, 10];
-const RELEARNING_STEPS = [10];
-const INITIAL_EASE_FACTOR = 2.5;
-const MINIMUM_EASE_FACTOR = 1.3;
-const HARD_MULTIPLIER = 1.2;
-const EASY_MULTIPLIER = 1.3;
-const LAPSE_MULTIPLIER = 0.0;
-const MINIMUM_LAPSE_INTERVAL = 1;
-const GRADUATING_INTERVAL_GOOD = 1;
-const GRADUATING_INTERVAL_EASY = 4;
+const DEFAULT_DECK_CONFIG = {
+  learnSteps: [1, 10],
+  relearnSteps: [10],
+  graduatingIntervalGood: 1,
+  graduatingIntervalEasy: 4,
+  initialEaseFactor: 2.5,
+  minimumEaseFactor: 1.3,
+  hardMultiplier: 1.2,
+  easyMultiplier: 1.3,
+  lapseMultiplier: 0.0,
+  minimumLapseInterval: 1,
+  maximumReviewInterval: 36500,
+  newCardsPerDay: 20,
+  reviewsPerDay: 200,
+  buryNew: false,
+  buryReviews: false,
+};
 
 type Rating = "again" | "hard" | "good" | "easy";
 type Phase = "new" | "learning" | "review" | "relearning";
+
+type DeckConfig = typeof DEFAULT_DECK_CONFIG;
 
 async function requireUser(ctx: { auth: unknown; db: unknown }) {
   const userId = await getAuthUserId(ctx as never);
@@ -30,11 +37,18 @@ function startOfDayKey(ts: number) {
   return new Date(ts).toISOString().slice(0, 10);
 }
 
-function clampEase(easeFactor: number) {
-  return Math.max(MINIMUM_EASE_FACTOR, easeFactor);
+function getDeckConfig(deck: any): DeckConfig {
+  return {
+    ...DEFAULT_DECK_CONFIG,
+    ...(deck?.config ?? {}),
+  };
 }
 
-function roundDays(interval: number, minimum = 1, maximum = MAX_REVIEW_INTERVAL) {
+function clampEase(easeFactor: number, config: DeckConfig) {
+  return Math.max(config.minimumEaseFactor, easeFactor);
+}
+
+function roundDays(interval: number, minimum = 1, maximum = DEFAULT_DECK_CONFIG.maximumReviewInterval) {
   return Math.round(interval || 0).toString() === "NaN"
     ? minimum
     : Math.max(minimum, Math.min(maximum, Math.round(interval)));
@@ -80,8 +94,8 @@ function constrainedFuzzBounds(interval: number, minimum: number, maximum: numbe
   return { lower, upper };
 }
 
-function applyReviewFuzz(interval: number, minimum: number, cardId: string, fuzz = true) {
-  const maximum = Math.max(1, MAX_REVIEW_INTERVAL);
+function applyReviewFuzz(interval: number, minimum: number, cardId: string, config: DeckConfig, fuzz = true) {
+  const maximum = Math.max(1, config.maximumReviewInterval);
   const boundedMinimum = Math.max(1, Math.min(minimum, maximum));
   if (!fuzz) return roundDays(interval, boundedMinimum, maximum);
   const { lower, upper } = constrainedFuzzBounds(interval, boundedMinimum, maximum);
@@ -136,11 +150,11 @@ function learningState(
   };
 }
 
-function nextSchedule(state: any, rating: Rating, now: number, cardId: string) {
+function nextSchedule(state: any, rating: Rating, now: number, cardId: string, config: DeckConfig) {
   const current = state ?? {
     phase: "new",
     interval: 0,
-    easeFactor: INITIAL_EASE_FACTOR,
+    easeFactor: config.initialEaseFactor,
     reps: 0,
     lapses: 0,
     stepIndex: 0,
@@ -148,7 +162,7 @@ function nextSchedule(state: any, rating: Rating, now: number, cardId: string) {
 
   const phase = (current.phase ?? "new") as Phase;
   const base = {
-    easeFactor: clampEase(current.easeFactor ?? INITIAL_EASE_FACTOR),
+    easeFactor: clampEase(current.easeFactor ?? config.initialEaseFactor, config),
     reps: (current.reps ?? 0) + 1,
     lapses: current.lapses ?? 0,
     lastReviewedAt: now,
@@ -163,15 +177,16 @@ function nextSchedule(state: any, rating: Rating, now: number, cardId: string) {
     if (rating === "again") {
       const lapses = base.lapses + 1;
       const lapseInterval = applyReviewFuzz(
-        Math.max(1, scheduledDays) * LAPSE_MULTIPLIER,
-        MINIMUM_LAPSE_INTERVAL,
+        Math.max(1, scheduledDays) * config.lapseMultiplier,
+        config.minimumLapseInterval,
         cardId,
+        config,
         true,
       );
       return {
         ...base,
-        ...learningState("relearning", RELEARNING_STEPS[0] ?? 10, 0, now, {
-          easeFactor: clampEase(base.easeFactor - 0.2),
+        ...learningState("relearning", config.relearnSteps[0] ?? 10, 0, now, {
+          easeFactor: clampEase(base.easeFactor - 0.2, config),
           lapses,
           interval: lapseInterval,
         }),
@@ -182,18 +197,19 @@ function nextSchedule(state: any, rating: Rating, now: number, cardId: string) {
       const scheduled = Math.max(1, scheduledDays);
       const elapsedPositive = Math.max(0, elapsed);
       const hardInterval = roundDays(
-        Math.max(elapsedPositive * HARD_MULTIPLIER, scheduled * (HARD_MULTIPLIER / 2)),
+        Math.max(elapsedPositive * config.hardMultiplier, scheduled * (config.hardMultiplier / 2)),
         1,
+        config.maximumReviewInterval,
       );
-      const goodInterval = roundDays(Math.max(elapsedPositive * base.easeFactor, scheduled), 1);
-      const reducedEasyBonus = EASY_MULTIPLIER - (EASY_MULTIPLIER - 1) / 2;
-      const easyInterval = roundDays(Math.max(elapsedPositive * base.easeFactor, scheduled) * reducedEasyBonus, 1);
+      const goodInterval = roundDays(Math.max(elapsedPositive * base.easeFactor, scheduled), 1, config.maximumReviewInterval);
+      const reducedEasyBonus = config.easyMultiplier - (config.easyMultiplier - 1) / 2;
+      const easyInterval = roundDays(Math.max(elapsedPositive * base.easeFactor, scheduled) * reducedEasyBonus, 1, config.maximumReviewInterval);
 
       if (rating === "hard") {
         return {
           ...base,
           ...reviewState(hardInterval, now, {
-            easeFactor: clampEase(base.easeFactor - 0.15),
+            easeFactor: clampEase(base.easeFactor - 0.15, config),
           }),
         };
       }
@@ -208,17 +224,17 @@ function nextSchedule(state: any, rating: Rating, now: number, cardId: string) {
       };
     }
 
-    const hardMinimum = HARD_MULTIPLIER <= 1 ? 0 : scheduledDays + 1;
-    const hardInterval = applyReviewFuzz(scheduledDays * HARD_MULTIPLIER, hardMinimum, cardId, true);
-    const goodMinimum = HARD_MULTIPLIER <= 1 ? scheduledDays + 1 : hardInterval + 1;
-    const goodInterval = applyReviewFuzz((scheduledDays + Math.max(daysLate, 0) / 2) * base.easeFactor, goodMinimum, cardId, true);
-    const easyInterval = applyReviewFuzz((scheduledDays + Math.max(daysLate, 0)) * base.easeFactor * EASY_MULTIPLIER, goodInterval + 1, cardId, true);
+    const hardMinimum = config.hardMultiplier <= 1 ? 0 : scheduledDays + 1;
+    const hardInterval = applyReviewFuzz(scheduledDays * config.hardMultiplier, hardMinimum, cardId, config, true);
+    const goodMinimum = config.hardMultiplier <= 1 ? scheduledDays + 1 : hardInterval + 1;
+    const goodInterval = applyReviewFuzz((scheduledDays + Math.max(daysLate, 0) / 2) * base.easeFactor, goodMinimum, cardId, config, true);
+    const easyInterval = applyReviewFuzz((scheduledDays + Math.max(daysLate, 0)) * base.easeFactor * config.easyMultiplier, goodInterval + 1, cardId, config, true);
 
     if (rating === "hard") {
       return {
         ...base,
         ...reviewState(hardInterval, now, {
-          easeFactor: clampEase(base.easeFactor - 0.15),
+          easeFactor: clampEase(base.easeFactor - 0.15, config),
         }),
       };
     }
@@ -234,7 +250,7 @@ function nextSchedule(state: any, rating: Rating, now: number, cardId: string) {
   }
 
   const isRelearning = phase === "relearning";
-  const steps = isRelearning ? RELEARNING_STEPS : LEARNING_STEPS;
+  const steps = isRelearning ? config.relearnSteps : config.learnSteps;
   const stepIndex = phase === "new" ? 0 : getCurrentStepIndex(current, steps);
   const nextStep = steps[stepIndex + 1];
 
@@ -272,7 +288,7 @@ function nextSchedule(state: any, rating: Rating, now: number, cardId: string) {
       ...reviewState(
         isRelearning
           ? Math.max(1, current.interval ?? 1)
-          : applyReviewFuzz(GRADUATING_INTERVAL_GOOD, 1, cardId, true),
+          : applyReviewFuzz(config.graduatingIntervalGood, 1, cardId, config, true),
         now,
       ),
     };
@@ -283,21 +299,19 @@ function nextSchedule(state: any, rating: Rating, now: number, cardId: string) {
     ...reviewState(
       isRelearning
         ? Math.max(Math.max(1, current.interval ?? 1) + 1, 2)
-        : applyReviewFuzz(GRADUATING_INTERVAL_EASY, GRADUATING_INTERVAL_GOOD + 1, cardId, true),
+        : applyReviewFuzz(config.graduatingIntervalEasy, config.graduatingIntervalGood + 1, cardId, config, true),
       now,
-      {
-        easeFactor: base.easeFactor,
-      },
+      { easeFactor: base.easeFactor },
     ),
   };
 }
 
-function getAnswerPreview(state: any, now: number, cardId: string) {
+function getAnswerPreview(state: any, now: number, cardId: string, config: DeckConfig) {
   return {
-    again: formatDelay(nextSchedule(state, "again", now, cardId).dueAt - now),
-    hard: formatDelay(nextSchedule(state, "hard", now, cardId).dueAt - now),
-    good: formatDelay(nextSchedule(state, "good", now, cardId).dueAt - now),
-    easy: formatDelay(nextSchedule(state, "easy", now, cardId).dueAt - now),
+    again: formatDelay(nextSchedule(state, "again", now, cardId, config).dueAt - now),
+    hard: formatDelay(nextSchedule(state, "hard", now, cardId, config).dueAt - now),
+    good: formatDelay(nextSchedule(state, "good", now, cardId, config).dueAt - now),
+    easy: formatDelay(nextSchedule(state, "easy", now, cardId, config).dueAt - now),
   };
 }
 
@@ -391,31 +405,53 @@ export const getStudySession = query({
         return (a.state?.dueAt ?? 0) - (b.state?.dueAt ?? 0);
       });
 
-    const rawCurrentCard = dueCards.find((card: any) => String(card._id) === String(session?.currentCardId ?? "")) ?? dueCards[0] ?? null;
+    const deckConfig = getDeckConfig(deck);
+    const recentReviews = await ctx.db
+      .query("reviewLogs")
+      .withIndex("by_user_deck", (q: any) => q.eq("userId", userId).eq("deckId", deckId))
+      .collect();
+    const todayKey = startOfDayKey(now);
+    const todayReviews = recentReviews.filter((review: any) => startOfDayKey(review.createdAt) === todayKey);
+    const introducedToday = new Set(
+      todayReviews
+        .filter((review: any) => review.reviewKind === "learning" && review.lastInterval === 0)
+        .map((review: any) => String(review.cardId)),
+    );
+    const reviewDoneToday = todayReviews.filter((review: any) => ["review", "filtered"].includes(review.reviewKind)).length;
+    const dueLearning = dueCards.filter((card: any) => ["learning", "relearning"].includes(card.state?.phase));
+    const dueReview = dueCards.filter((card: any) => card.state?.phase === "review").slice(0, Math.max(0, deckConfig.reviewsPerDay - reviewDoneToday));
+    const dueNew = dueCards.filter((card: any) => !card.state || card.state?.phase === "new").slice(0, Math.max(0, deckConfig.newCardsPerDay - introducedToday.size));
+    const limitedDueCards = [...dueLearning, ...dueReview, ...dueNew];
+    const sessionCards = limitedDueCards.length ? limitedDueCards : dueCards;
+    const rawCurrentCard = sessionCards.find((card: any) => String(card._id) === String(session?.currentCardId ?? "")) ?? sessionCards[0] ?? null;
     const currentCard = rawCurrentCard
       ? {
           ...rawCurrentCard,
-          answerPreview: getAnswerPreview(rawCurrentCard.state, now, String(rawCurrentCard._id)),
+          answerPreview: getAnswerPreview(rawCurrentCard.state, now, String(rawCurrentCard._id), deckConfig),
         }
       : null;
 
     return {
       deck,
       session,
+      deckConfig,
       dueCounts: {
-        due: dueCards.length,
+        due: sessionCards.length,
         new: enriched.filter((card: any) => card.state?.phase === "new").length,
         learning: enriched.filter((card: any) => ["learning", "relearning"].includes(card.state?.phase)).length,
         review: enriched.filter((card: any) => card.state?.phase === "review" && card.state?.dueAt <= now).length,
       },
       streak: session && session.lastStudiedDay === startOfDayKey(now) ? session.reviewedToday : 0,
       currentCard,
-      upcoming: dueCards.slice(1, 6).map((card: any) => ({ _id: card._id, front: card.front })),
+      upcoming: sessionCards.slice(1, 6).map((card: any) => ({ _id: card._id, front: card.front })),
       stats: {
         totalCards: cards.length,
         reviewedCards: states.filter((state: any) => state.reps > 0).length,
         matureCards: states.filter((state: any) => state.phase === "review" && state.interval >= 21).length,
       },
+      recentReviews: recentReviews
+        .sort((a: any, b: any) => b.createdAt - a.createdAt)
+        .slice(0, 12),
     };
   },
 });
@@ -429,6 +465,7 @@ export const createDeck = mutation({
       userId,
       title: args.title.trim(),
       description: args.description?.trim() || undefined,
+      config: DEFAULT_DECK_CONFIG,
       createdAt: now,
       updatedAt: now,
     });
@@ -472,7 +509,7 @@ export const importCards = mutation({
         phase: "new",
         dueAt: 0,
         interval: 0,
-        easeFactor: INITIAL_EASE_FACTOR,
+        easeFactor: getDeckConfig(deck).initialEaseFactor,
         reps: 0,
         lapses: 0,
         stepIndex: 0,
@@ -495,6 +532,7 @@ export const revealCurrentCard = mutation({
     const patch = {
       currentCardId,
       revealed,
+      revealedAt: revealed ? now : undefined,
       updatedAt: now,
       lastStudiedDay: startOfDayKey(now),
     };
@@ -507,6 +545,7 @@ export const revealCurrentCard = mutation({
       deckId,
       currentCardId,
       revealed,
+      revealedAt: revealed ? now : undefined,
       reviewedToday: 0,
       lastStudiedDay: startOfDayKey(now),
       startedAt: now,
@@ -524,10 +563,13 @@ export const answerCard = mutation({
   handler: async (ctx, { deckId, cardId, rating }) => {
     const userId = await requireUser(ctx);
     const now = Date.now();
+    const deck = await ctx.db.get(deckId);
+    if (!deck || String(deck.userId) !== String(userId)) throw new Error("Deck not found");
+    const deckConfig = getDeckConfig(deck);
     const states = await ctx.db.query("studyStates").withIndex("by_user_card", (q: any) => q.eq("userId", userId).eq("cardId", cardId)).collect();
     const current = states[0];
     if (!current) throw new Error("Study state missing");
-    const schedule = nextSchedule(current, rating, now, String(cardId));
+    const schedule = nextSchedule(current, rating, now, String(cardId), deckConfig);
     await ctx.db.patch(current._id, {
       ...(schedule as any),
       updatedAt: now,
@@ -536,10 +578,34 @@ export const answerCard = mutation({
     const sessions = await ctx.db.query("studySessions").withIndex("by_user_deck", (q: any) => q.eq("userId", userId).eq("deckId", deckId)).collect();
     const session = sessions[0];
     const day = startOfDayKey(now);
+    const takenMillis = Math.min(60_000, Math.max(0, now - (session?.revealedAt ?? now)));
+    const reviewKind = current.phase === "review"
+      ? elapsedDays(current, now) < current.interval
+        ? "filtered"
+        : "review"
+      : current.phase === "relearning"
+        ? "relearning"
+        : "learning";
+
+    const scheduleAny = schedule as any;
+    await ctx.db.insert("reviewLogs", {
+      userId,
+      deckId,
+      cardId,
+      rating,
+      reviewKind,
+      interval: scheduleAny.interval ?? 0,
+      lastInterval: current.interval ?? 0,
+      easeFactor: scheduleAny.easeFactor ?? current.easeFactor,
+      takenMillis,
+      createdAt: now,
+    });
+
     if (session) {
       await ctx.db.patch(session._id, {
         currentCardId: undefined,
         revealed: false,
+        revealedAt: undefined,
         reviewedToday: session.lastStudiedDay === day ? session.reviewedToday + 1 : 1,
         lastStudiedDay: day,
         updatedAt: now,
@@ -550,6 +616,7 @@ export const answerCard = mutation({
         deckId,
         currentCardId: undefined,
         revealed: false,
+        revealedAt: undefined,
         reviewedToday: 1,
         lastStudiedDay: day,
         startedAt: now,

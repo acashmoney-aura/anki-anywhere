@@ -206,6 +206,7 @@ function DeckWorkspace({ deckId, summary }: { deckId: string; summary: Deck }) {
           <span>{study.dueCounts.learning} learning</span>
           <span>{study.dueCounts.review} review</span>
           <span>{study.stats.totalCards} total</span>
+          <span>{study.deckConfig?.learnSteps?.join(" → ")}m steps</span>
         </div>
       </header>
 
@@ -333,6 +334,21 @@ function DeckWorkspace({ deckId, summary }: { deckId: string; summary: Deck }) {
                   <span className={`phase-tag ${card.state?.phase ?? "new"}`}>{card.state?.phase ?? "new"}</span>
                 </div>
               ))}
+            </div>
+          </div>
+
+          <div className="glass library-panel">
+            <div className="section-title">Recent reviews</div>
+            <div className="card-list">
+              {study.recentReviews?.length ? study.recentReviews.map((review: any) => (
+                <div className="card-row" key={review._id}>
+                  <div>
+                    <strong>{String(review.rating).toUpperCase()}</strong>
+                    <p>{review.reviewKind} · {review.lastInterval || 0}d → {review.interval || 0}d · {Math.round(review.takenMillis / 1000)}s</p>
+                  </div>
+                  <span className="phase-tag review">{Math.round(review.easeFactor * 100)}%</span>
+                </div>
+              )) : <div className="upcoming-row">No review history yet.</div>}
             </div>
           </div>
         </section>
