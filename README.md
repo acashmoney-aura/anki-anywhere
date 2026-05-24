@@ -1,51 +1,35 @@
 # Anki Anywhere
 
-Anki-style flashcards for web + mobile.
+A local-first Anki-style flashcard app for web + mobile.
 
 ## Features
 
-- per-user sync with Convex
+- browser-local collection persistence (no account required)
 - resumable study sessions
+- collection export/import as JSON
 - imports from CSV / TSV / JSON / `front::back::tags`
 - `Again / Hard / Good / Easy` scheduling tuned closely to classic Anki defaults
 
 ## Stack
 
 - React + Vite
-- Convex
-- Convex Auth
+- localStorage-backed collection store
 - Framer Motion
 
 ## Local setup
 
 ```bash
 npm install
-npx convex dev
-npx @convex-dev/auth
-npm run dev
+npm run dev:frontend
 ```
 
-## Environment
-
-```bash
-VITE_CONVEX_URL=your_convex_url
-```
+No backend setup is required for the current local-first version.
 
 ## GitHub Pages deploy
 
 This repo includes `.github/workflows/deploy-pages.yml`.
 
-Set this GitHub Actions variable before deploying:
-
-```txt
-VITE_CONVEX_URL=https://<your-deployment>.convex.cloud
-```
-
-If auth is not initialized on the Convex deployment yet, run:
-
-```bash
-npx @convex-dev/auth --prod --deployment-name <your-deployment-name>
-```
+No extra environment variables are required for the current GitHub Pages deployment.
 
 ## Scheduler note
 
