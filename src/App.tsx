@@ -23,6 +23,8 @@ type CardImport = {
   hint?: string;
   tags?: string[];
   source?: string;
+  noteId?: string;
+  templateOrdinal?: number;
 };
 
 const typedApi = api as any;
@@ -417,6 +419,8 @@ function normalizeCard(value: Record<string, unknown>): CardImport | null {
     back,
     hint: typeof value.hint === "string" ? value.hint : undefined,
     source: typeof value.source === "string" ? value.source : undefined,
+    noteId: typeof value.noteId === "string" ? value.noteId : undefined,
+    templateOrdinal: typeof value.templateOrdinal === "number" ? value.templateOrdinal : undefined,
     tags,
   };
 }

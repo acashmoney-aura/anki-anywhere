@@ -42,6 +42,8 @@ export default defineSchema({
   cards: defineTable({
     userId: v.id("users"),
     deckId: v.id("decks"),
+    noteId: v.string(),
+    templateOrdinal: v.number(),
     front: v.string(),
     back: v.string(),
     hint: v.optional(v.string()),
@@ -51,7 +53,8 @@ export default defineSchema({
     updatedAt: v.number(),
   })
     .index("by_deck", ["deckId"])
-    .index("by_user_deck", ["userId", "deckId"]),
+    .index("by_user_deck", ["userId", "deckId"])
+    .index("by_user_deck_note", ["userId", "deckId", "noteId"]),
   studyStates: defineTable({
     userId: v.id("users"),
     deckId: v.id("decks"),
@@ -72,6 +75,8 @@ export default defineSchema({
     lastReviewedAt: v.optional(v.number()),
     lastReviewedDay: v.optional(v.number()),
     lastRating: v.optional(v.string()),
+    buriedUntilDay: v.optional(v.number()),
+    buriedReason: v.optional(v.string()),
     createdAt: v.number(),
     updatedAt: v.number(),
   })

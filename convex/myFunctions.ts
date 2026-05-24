@@ -348,10 +348,15 @@ function getAnswerPreview(state: any, now: number, cardId: string, config: DeckC
   };
 }
 
+function isBuried(state: any, currentDay: number) {
+  return typeof state?.buriedUntilDay === "number" && state.buriedUntilDay >= currentDay;
+}
+
 function isCardDue(state: any, now: number, config: DeckConfig) {
+  const currentDay = schedulerDayNumber(now, config);
+  if (isBuried(state, currentDay)) return false;
   if (!state || state.phase === "new") return true;
   if (state.phase === "review") {
-    const currentDay = schedulerDayNumber(now, config);
     if (typeof state.dueDay === "number") return state.dueDay <= currentDay;
   }
   return state.dueAt <= now;
@@ -527,6 +532,8 @@ export const importCards = mutation({
         hint: v.optional(v.string()),
         tags: v.optional(v.array(v.string())),
         source: v.optional(v.string()),
+        noteId: v.optional(v.string()),
+        templateOrdinal: v.optional(v.number()),
       }),
     ),
   },
@@ -535,10 +542,13 @@ export const importCards = mutation({
     const deck = await ctx.db.get(deckId);
     if (!deck || String(deck.userId) !== String(userId)) throw new Error("Deck not found");
     const now = Date.now();
-    for (const card of cards) {
+    for (const [index, card] of cards.entries()) {
+      const noteId = card.noteId?.trim() || `note:${now}:${index}:${Math.random().toString(36).slice(2, 8)}`;
       const cardId = await ctx.db.insert("cards", {
         userId,
         deckId,
+        noteId,
+        templateOrdinal: card.templateOrdinal ?? 0,
         front: card.front.trim(),
         back: card.back.trim(),
         hint: card.hint?.trim() || undefined,
@@ -559,6 +569,8 @@ export const importCards = mutation({
         reps: 0,
         lapses: 0,
         stepIndex: 0,
+        buriedUntilDay: undefined,
+        buriedReason: undefined,
         createdAt: now,
         updatedAt: now,
       });
@@ -617,12 +629,16 @@ export const answerCard = mutation({
     const deck = await ctx.db.get(deckId);
     if (!deck || String(deck.userId) !== String(userId)) throw new Error("Deck not found");
     const deckConfig = getDeckConfig(deck);
+    const card = await ctx.db.get(cardId);
+    if (!card || String(card.userId) !== String(userId)) throw new Error("Card not found");
     const states = await ctx.db.query("studyStates").withIndex("by_user_card", (q: any) => q.eq("userId", userId).eq("cardId", cardId)).collect();
     const current = states[0];
     if (!current) throw new Error("Study state missing");
     const schedule = nextSchedule(current, rating, now, String(cardId), deckConfig);
     await ctx.db.patch(current._id, {
       ...(schedule as any),
+      buriedUntilDay: undefined,
+      buriedReason: undefined,
       updatedAt: now,
     });
 
@@ -640,6 +656,29 @@ export const answerCard = mutation({
         : "learning";
 
     const scheduleAny = schedule as any;
+    const shouldBurySiblings = (current.phase === "review" && deckConfig.buryReviews)
+      || (current.phase !== "review" && deckConfig.buryNew);
+    if (shouldBurySiblings) {
+      const siblingCards = await ctx.db
+        .query("cards")
+        .withIndex("by_user_deck_note", (q: any) => q.eq("userId", userId).eq("deckId", deckId).eq("noteId", card.noteId))
+        .collect();
+      for (const sibling of siblingCards) {
+        if (String(sibling._id) === String(cardId)) continue;
+        const siblingStates = await ctx.db
+          .query("studyStates")
+          .withIndex("by_user_card", (q: any) => q.eq("userId", userId).eq("cardId", sibling._id))
+          .collect();
+        const siblingState = siblingStates[0];
+        if (!siblingState || !isCardDue(siblingState, now, deckConfig)) continue;
+        await ctx.db.patch(siblingState._id, {
+          buriedUntilDay: dayNumber,
+          buriedReason: current.phase === "review" ? "sibling-review" : "sibling-new",
+          updatedAt: now,
+        });
+      }
+    }
+
     await ctx.db.insert("reviewLogs", {
       userId,
       deckId,
