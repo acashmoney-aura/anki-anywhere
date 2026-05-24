@@ -29,11 +29,12 @@ Convex handles the backend, database, realtime sync, and auth.
 
 Your **frontend still needs static hosting**.
 
-Recommended:
+You can use either:
+- **GitHub Pages** for the frontend
 - **Vercel** for the frontend
 - **Convex** for backend/auth/data
 
-This matches Convex's own deployment guidance.
+This repo is now prepared for **GitHub Pages** deployment via GitHub Actions.
 
 ## Local setup
 
@@ -74,9 +75,39 @@ VITE_CONVEX_URL=your_production_convex_url
 npx convex deploy
 ```
 
-### 2. Deploy frontend
+### 2. Deploy frontend with GitHub Pages
 
-Push this repo to GitHub, then import it into Vercel.
+This repo includes a workflow at:
+
+```txt
+.github/workflows/deploy-pages.yml
+```
+
+After pushing to GitHub:
+
+1. Open the repository on GitHub
+2. Go to **Settings → Pages**
+3. Set **Source** to **GitHub Actions**
+4. Go to **Settings → Secrets and variables → Actions → Variables**
+5. Add this repository variable:
+
+```txt
+VITE_CONVEX_URL=https://<your-deployment>.convex.cloud
+```
+
+6. Push to `main` (or manually run the workflow)
+7. GitHub will publish the site at:
+
+```txt
+https://<your-github-username>.github.io/<repo-name>/
+```
+
+Notes:
+- The workflow automatically sets the Vite base path for GitHub Pages.
+- It also creates `404.html` so refreshes work better on Pages.
+- GitHub Pages hosts only the frontend. Convex remains the backend.
+
+### 3. Optional: deploy frontend with Vercel instead
 
 Build command:
 
@@ -96,7 +127,7 @@ Set this env var in Vercel:
 VITE_CONVEX_URL=https://<your-deployment>.convex.cloud
 ```
 
-### 3. Verify auth + data
+### 4. Verify auth + data
 
 - create account
 - create a deck
@@ -149,3 +180,4 @@ It is intentionally close to Anki behavior, but not a byte-for-byte clone of Ank
 
 - `npm run build` ✅
 - `npm run lint` ✅ (generated Convex files still emit harmless warnings)
+- GitHub Pages workflow added ✅
