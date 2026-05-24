@@ -20,6 +20,8 @@ const DEFAULT_DECK_CONFIG = {
   reviewsPerDay: 200,
   buryNew: false,
   buryReviews: false,
+  rolloverHour: 4,
+  timezone: "America/New_York",
 };
 
 type Rating = "again" | "hard" | "good" | "easy";
@@ -33,8 +35,30 @@ async function requireUser(ctx: { auth: unknown; db: unknown }) {
   return userId;
 }
 
-function startOfDayKey(ts: number) {
-  return new Date(ts).toISOString().slice(0, 10);
+function getZonedDateParts(ts: number, timezone: string) {
+  const formatter = new Intl.DateTimeFormat("en-CA", {
+    timeZone: timezone,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  });
+  const parts = formatter.formatToParts(new Date(ts));
+  const year = Number(parts.find((part) => part.type === "year")?.value ?? 1970);
+  const month = Number(parts.find((part) => part.type === "month")?.value ?? 1);
+  const day = Number(parts.find((part) => part.type === "day")?.value ?? 1);
+  return { year, month, day };
+}
+
+function schedulerDayNumber(ts: number, config: DeckConfig) {
+  const shifted = ts - config.rolloverHour * 60 * 60 * 1000;
+  const { year, month, day } = getZonedDateParts(shifted, config.timezone);
+  return Math.floor(Date.UTC(year, month - 1, day) / DAY_MS);
+}
+
+function schedulerDayKey(ts: number, config: DeckConfig) {
+  const shifted = ts - config.rolloverHour * 60 * 60 * 1000;
+  const { year, month, day } = getZonedDateParts(shifted, config.timezone);
+  return `${year.toString().padStart(4, "0")}-${month.toString().padStart(2, "0")}-${day.toString().padStart(2, "0")}`;
 }
 
 function getDeckConfig(deck: any): DeckConfig {
@@ -120,15 +144,21 @@ function getHardLearningDelayMinutes(steps: number[], stepIndex: number) {
   return current;
 }
 
-function elapsedDays(state: any, now: number) {
+function elapsedDays(state: any, now: number, config: DeckConfig) {
+  if (typeof state?.lastReviewedDay === "number") {
+    return Math.max(0, schedulerDayNumber(now, config) - state.lastReviewedDay);
+  }
   if (!state?.lastReviewedAt) return Math.max(1, state?.interval ?? 1);
   return Math.max(0, Math.floor((now - state.lastReviewedAt) / DAY_MS));
 }
 
-function reviewState(intervalDays: number, now: number, overrides: Record<string, unknown> = {}) {
+function reviewState(intervalDays: number, now: number, config: DeckConfig, overrides: Record<string, unknown> = {}) {
+  const currentDay = schedulerDayNumber(now, config);
+  const dueDay = currentDay + intervalDays;
   return {
     phase: "review" as Phase,
     interval: intervalDays,
+    dueDay,
     stepIndex: undefined,
     dueAt: now + intervalDays * DAY_MS,
     ...overrides,
@@ -166,12 +196,13 @@ function nextSchedule(state: any, rating: Rating, now: number, cardId: string, c
     reps: (current.reps ?? 0) + 1,
     lapses: current.lapses ?? 0,
     lastReviewedAt: now,
+    lastReviewedDay: schedulerDayNumber(now, config),
     lastRating: rating,
   };
 
   if (phase === "review") {
     const scheduledDays = Math.max(1, current.interval ?? 1);
-    const elapsed = elapsedDays(current, now);
+    const elapsed = elapsedDays(current, now, config);
     const daysLate = elapsed - scheduledDays;
 
     if (rating === "again") {
@@ -208,17 +239,17 @@ function nextSchedule(state: any, rating: Rating, now: number, cardId: string, c
       if (rating === "hard") {
         return {
           ...base,
-          ...reviewState(hardInterval, now, {
+          ...reviewState(hardInterval, now, config, {
             easeFactor: clampEase(base.easeFactor - 0.15, config),
           }),
         };
       }
       if (rating === "good") {
-        return { ...base, ...reviewState(goodInterval, now) };
+        return { ...base, ...reviewState(goodInterval, now, config) };
       }
       return {
         ...base,
-        ...reviewState(Math.max(goodInterval + 1, easyInterval), now, {
+        ...reviewState(Math.max(goodInterval + 1, easyInterval), now, config, {
           easeFactor: base.easeFactor + 0.15,
         }),
       };
@@ -233,17 +264,17 @@ function nextSchedule(state: any, rating: Rating, now: number, cardId: string, c
     if (rating === "hard") {
       return {
         ...base,
-        ...reviewState(hardInterval, now, {
+        ...reviewState(hardInterval, now, config, {
           easeFactor: clampEase(base.easeFactor - 0.15, config),
         }),
       };
     }
     if (rating === "good") {
-      return { ...base, ...reviewState(goodInterval, now) };
+      return { ...base, ...reviewState(goodInterval, now, config) };
     }
     return {
       ...base,
-      ...reviewState(easyInterval, now, {
+      ...reviewState(easyInterval, now, config, {
         easeFactor: base.easeFactor + 0.15,
       }),
     };
@@ -290,6 +321,7 @@ function nextSchedule(state: any, rating: Rating, now: number, cardId: string, c
           ? Math.max(1, current.interval ?? 1)
           : applyReviewFuzz(config.graduatingIntervalGood, 1, cardId, config, true),
         now,
+        config,
       ),
     };
   }
@@ -301,6 +333,7 @@ function nextSchedule(state: any, rating: Rating, now: number, cardId: string, c
         ? Math.max(Math.max(1, current.interval ?? 1) + 1, 2)
         : applyReviewFuzz(config.graduatingIntervalEasy, config.graduatingIntervalGood + 1, cardId, config, true),
       now,
+      config,
       { easeFactor: base.easeFactor },
     ),
   };
@@ -313,6 +346,15 @@ function getAnswerPreview(state: any, now: number, cardId: string, config: DeckC
     good: formatDelay(nextSchedule(state, "good", now, cardId, config).dueAt - now),
     easy: formatDelay(nextSchedule(state, "easy", now, cardId, config).dueAt - now),
   };
+}
+
+function isCardDue(state: any, now: number, config: DeckConfig) {
+  if (!state || state.phase === "new") return true;
+  if (state.phase === "review") {
+    const currentDay = schedulerDayNumber(now, config);
+    if (typeof state.dueDay === "number") return state.dueDay <= currentDay;
+  }
+  return state.dueAt <= now;
 }
 
 function queuePriority(card: any) {
@@ -333,9 +375,10 @@ export const listDecks = query({
 
     return decks
       .map((deck: any) => {
+        const deckConfig = getDeckConfig(deck);
         const deckCards = cards.filter((card: any) => String(card.deckId) === String(deck._id));
         const deckStates = cardStates.filter((state: any) => String(state.deckId) === String(deck._id));
-        const due = deckStates.filter((state: any) => state.phase === "new" || state.dueAt <= now).length;
+        const due = deckStates.filter((state: any) => isCardDue(state, now, deckConfig)).length;
         const reviewing = deckStates.filter((state: any) => state.phase === "review").length;
         const learning = deckStates.filter((state: any) => state.phase === "learning" || state.phase === "relearning").length;
         const newCards = deckStates.filter((state: any) => state.phase === "new").length;
@@ -364,6 +407,7 @@ export const getDeck = query({
     const stateByCard = new Map(states.map((state: any) => [String(state.cardId), state]));
     const now = Date.now();
 
+    const deckConfig = getDeckConfig(deck);
     return {
       deck,
       cards: cards
@@ -372,7 +416,7 @@ export const getDeck = query({
           return {
             ...card,
             state,
-            isDue: !state || state.phase === "new" || state.dueAt <= now,
+            isDue: isCardDue(state, now, deckConfig),
           };
         })
         .sort((a: any, b: any) => a.front.localeCompare(b.front)),
@@ -397,21 +441,22 @@ export const getStudySession = query({
       ...card,
       state: stateByCard.get(String(card._id)) ?? null,
     }));
+    const deckConfig = getDeckConfig(deck);
     const dueCards = enriched
-      .filter((card: any) => !card.state || card.state.phase === "new" || card.state.dueAt <= now)
+      .filter((card: any) => isCardDue(card.state, now, deckConfig))
       .sort((a: any, b: any) => {
         const queueDelta = queuePriority(a) - queuePriority(b);
         if (queueDelta !== 0) return queueDelta;
         return (a.state?.dueAt ?? 0) - (b.state?.dueAt ?? 0);
       });
 
-    const deckConfig = getDeckConfig(deck);
     const recentReviews = await ctx.db
       .query("reviewLogs")
       .withIndex("by_user_deck", (q: any) => q.eq("userId", userId).eq("deckId", deckId))
       .collect();
-    const todayKey = startOfDayKey(now);
-    const todayReviews = recentReviews.filter((review: any) => startOfDayKey(review.createdAt) === todayKey);
+    const todayDayNumber = schedulerDayNumber(now, deckConfig);
+    const todayKey = schedulerDayKey(now, deckConfig);
+    const todayReviews = recentReviews.filter((review: any) => review.schedulerDay === todayDayNumber || schedulerDayKey(review.createdAt, deckConfig) === todayKey);
     const introducedToday = new Set(
       todayReviews
         .filter((review: any) => review.reviewKind === "learning" && review.lastInterval === 0)
@@ -439,9 +484,9 @@ export const getStudySession = query({
         due: sessionCards.length,
         new: enriched.filter((card: any) => card.state?.phase === "new").length,
         learning: enriched.filter((card: any) => ["learning", "relearning"].includes(card.state?.phase)).length,
-        review: enriched.filter((card: any) => card.state?.phase === "review" && card.state?.dueAt <= now).length,
+        review: enriched.filter((card: any) => card.state?.phase === "review" && isCardDue(card.state, now, deckConfig)).length,
       },
-      streak: session && session.lastStudiedDay === startOfDayKey(now) ? session.reviewedToday : 0,
+      streak: session && (session.lastStudiedDayNumber === todayDayNumber || session.lastStudiedDay === todayKey) ? session.reviewedToday : 0,
       currentCard,
       upcoming: sessionCards.slice(1, 6).map((card: any) => ({ _id: card._id, front: card.front })),
       stats: {
@@ -508,6 +553,7 @@ export const importCards = mutation({
         cardId,
         phase: "new",
         dueAt: 0,
+        dueDay: undefined,
         interval: 0,
         easeFactor: getDeckConfig(deck).initialEaseFactor,
         reps: 0,
@@ -529,12 +575,16 @@ export const revealCurrentCard = mutation({
     const now = Date.now();
     const sessions = await ctx.db.query("studySessions").withIndex("by_user_deck", (q: any) => q.eq("userId", userId).eq("deckId", deckId)).collect();
     const existing = sessions[0];
+    const deck = await ctx.db.get(deckId);
+    if (!deck || String(deck.userId) !== String(userId)) throw new Error("Deck not found");
+    const deckConfig = getDeckConfig(deck);
     const patch = {
       currentCardId,
       revealed,
       revealedAt: revealed ? now : undefined,
       updatedAt: now,
-      lastStudiedDay: startOfDayKey(now),
+      lastStudiedDay: schedulerDayKey(now, deckConfig),
+      lastStudiedDayNumber: schedulerDayNumber(now, deckConfig),
     };
     if (existing) {
       await ctx.db.patch(existing._id, patch);
@@ -547,7 +597,8 @@ export const revealCurrentCard = mutation({
       revealed,
       revealedAt: revealed ? now : undefined,
       reviewedToday: 0,
-      lastStudiedDay: startOfDayKey(now),
+      lastStudiedDay: schedulerDayKey(now, deckConfig),
+      lastStudiedDayNumber: schedulerDayNumber(now, deckConfig),
       startedAt: now,
       updatedAt: now,
     });
@@ -577,10 +628,11 @@ export const answerCard = mutation({
 
     const sessions = await ctx.db.query("studySessions").withIndex("by_user_deck", (q: any) => q.eq("userId", userId).eq("deckId", deckId)).collect();
     const session = sessions[0];
-    const day = startOfDayKey(now);
+    const day = schedulerDayKey(now, deckConfig);
+    const dayNumber = schedulerDayNumber(now, deckConfig);
     const takenMillis = Math.min(60_000, Math.max(0, now - (session?.revealedAt ?? now)));
     const reviewKind = current.phase === "review"
-      ? elapsedDays(current, now) < current.interval
+      ? elapsedDays(current, now, deckConfig) < current.interval
         ? "filtered"
         : "review"
       : current.phase === "relearning"
@@ -598,6 +650,7 @@ export const answerCard = mutation({
       lastInterval: current.interval ?? 0,
       easeFactor: scheduleAny.easeFactor ?? current.easeFactor,
       takenMillis,
+      schedulerDay: dayNumber,
       createdAt: now,
     });
 
@@ -606,8 +659,9 @@ export const answerCard = mutation({
         currentCardId: undefined,
         revealed: false,
         revealedAt: undefined,
-        reviewedToday: session.lastStudiedDay === day ? session.reviewedToday + 1 : 1,
+        reviewedToday: session.lastStudiedDayNumber === dayNumber || session.lastStudiedDay === day ? session.reviewedToday + 1 : 1,
         lastStudiedDay: day,
+        lastStudiedDayNumber: dayNumber,
         updatedAt: now,
       });
     } else {
@@ -619,6 +673,7 @@ export const answerCard = mutation({
         revealedAt: undefined,
         reviewedToday: 1,
         lastStudiedDay: day,
+        lastStudiedDayNumber: dayNumber,
         startedAt: now,
         updatedAt: now,
       });

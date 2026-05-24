@@ -18,6 +18,8 @@ const deckConfig = v.object({
   reviewsPerDay: v.number(),
   buryNew: v.boolean(),
   buryReviews: v.boolean(),
+  rolloverHour: v.number(),
+  timezone: v.string(),
 });
 
 export default defineSchema({
@@ -61,12 +63,14 @@ export default defineSchema({
       v.literal("relearning"),
     ),
     dueAt: v.number(),
+    dueDay: v.optional(v.number()),
     interval: v.number(),
     easeFactor: v.number(),
     reps: v.number(),
     lapses: v.number(),
     stepIndex: v.optional(v.number()),
     lastReviewedAt: v.optional(v.number()),
+    lastReviewedDay: v.optional(v.number()),
     lastRating: v.optional(v.string()),
     createdAt: v.number(),
     updatedAt: v.number(),
@@ -81,6 +85,7 @@ export default defineSchema({
     revealedAt: v.optional(v.number()),
     reviewedToday: v.number(),
     lastStudiedDay: v.string(),
+    lastStudiedDayNumber: v.optional(v.number()),
     startedAt: v.number(),
     updatedAt: v.number(),
   })
@@ -100,6 +105,7 @@ export default defineSchema({
     lastInterval: v.number(),
     easeFactor: v.number(),
     takenMillis: v.number(),
+    schedulerDay: v.optional(v.number()),
     createdAt: v.number(),
   })
     .index("by_user_deck", ["userId", "deckId"])
