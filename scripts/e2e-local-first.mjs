@@ -38,7 +38,15 @@ try {
 
   await page.locator('.library-panel .card-row select').first().selectOption('2');
   await page.locator('.library-panel').getByRole('button', { name: /Suspend card/i }).first().click();
+  await page.getByPlaceholder(/Search cards, tags, hints/i).fill('is:suspended');
+  await page.waitForFunction(() => {
+    const tags = Array.from(document.querySelectorAll('.library-panel .phase-tag')).map((el) => el.textContent || '');
+    return tags.some((text) => text.includes('suspended'));
+  }, { timeout: 30000 });
   await page.locator('.library-panel').getByRole('button', { name: /Suspend card/i }).first().click();
+  await page.getByPlaceholder(/Search cards, tags, hints/i).fill('flag:2');
+  await page.waitForFunction(() => /F2|flag 2/i.test(document.body.innerText), { timeout: 30000 });
+  await page.getByPlaceholder(/Search cards, tags, hints/i).fill('');
   await page.locator('.library-panel').getByRole('button', { name: /Bury card/i }).first().click();
 
   await page.keyboard.press('Space');

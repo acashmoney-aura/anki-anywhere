@@ -10,7 +10,7 @@ A local-first Anki-style flashcard app for web + mobile.
 - basic note types, including `Basic`, `Basic (and reversed card)`, and lightweight `Cloze`
 - deck options for daily limits, steps, and sibling bury behavior
 - keyboard review shortcuts (`Space/Enter`, `1/2/3/4`)
-- basic browser/editor for searching and editing cards
+- basic browser/editor for searching and editing cards, with filters like `is:suspended`, `is:buried`, `flag:2`, and `tag:biology`
 - browser card actions: suspend, manual bury, and flags
 - lightweight deck stats for mature/reviewed/suspended/buried cards
 - imports from CSV / TSV / JSON / `front::back::tags`

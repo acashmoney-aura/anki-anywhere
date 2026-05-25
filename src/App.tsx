@@ -177,11 +177,19 @@ function DeckWorkspace({ deckId, summary }: { deckId: string; summary: Deck }) {
 
   const filteredCards = useMemo(() => {
     const cards = deckData?.cards ?? [];
-    const query = browserQuery.trim().toLowerCase();
-    if (!query) return cards;
-    return cards.filter((card: any) =>
-      [card.front, card.back, card.hint ?? "", ...(card.tags ?? [])].join(" ").toLowerCase().includes(query),
-    );
+    const raw = browserQuery.trim().toLowerCase();
+    if (!raw) return cards;
+    const tokens = raw.split(/\s+/).filter(Boolean);
+    return cards.filter((card: any) => {
+      const haystack = [card.front, card.back, card.hint ?? "", ...(card.tags ?? [])].join(" ").toLowerCase();
+      return tokens.every((token) => {
+        if (token === "is:suspended") return Boolean(card.state?.suspended);
+        if (token === "is:buried") return typeof card.state?.buriedUntilDay === "number";
+        if (token.startsWith("flag:")) return Number(token.slice(5)) === (card.state?.flag ?? 0);
+        if (token.startsWith("tag:")) return (card.tags ?? []).some((tag: string) => tag.toLowerCase() === token.slice(4));
+        return haystack.includes(token);
+      });
+    });
   }, [browserQuery, deckData?.cards]);
 
   useEffect(() => {
@@ -459,7 +467,7 @@ function DeckWorkspace({ deckId, summary }: { deckId: string; summary: Deck }) {
               <span>{deckData.cards.filter((card: any) => card.state?.phase === "review").length} review</span>
               <span>{deckData.cards.filter((card: any) => card.isDue).length} due</span>
             </div>
-            <input value={browserQuery} onChange={(e) => setBrowserQuery(e.target.value)} placeholder="Search cards, tags, hints" />
+            <input value={browserQuery} onChange={(e) => setBrowserQuery(e.target.value)} placeholder="Search cards, tags, hints, is:suspended, flag:2" />
             <div className="card-list">
               {filteredCards.slice(0, 100).map((card: any) => (
                 <div className="card-row" key={card._id}>
