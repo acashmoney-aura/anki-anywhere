@@ -687,6 +687,42 @@ export function answerCard(deckId: string, cardId: string, rating: Rating) {
   return schedule;
 }
 
+export function updateDeckConfig(deckId: string, patch: Partial<DeckConfig>) {
+  updateCollection((collection) => {
+    const deck = collection.decks.find((item) => item._id === deckId);
+    if (!deck) throw new Error("Deck not found");
+    deck.config = { ...deck.config, ...patch };
+    deck.updatedAt = Date.now();
+  });
+}
+
+export function updateCard(cardId: string, patch: { front?: string; back?: string; hint?: string; tags?: string[] }) {
+  updateCollection((collection) => {
+    const card = collection.cards.find((item) => item._id === cardId);
+    if (!card) throw new Error("Card not found");
+    if (typeof patch.front === "string") card.front = patch.front.trim();
+    if (typeof patch.back === "string") card.back = patch.back.trim();
+    if (typeof patch.hint === "string") card.hint = patch.hint.trim() || undefined;
+    if (Array.isArray(patch.tags)) card.tags = patch.tags.map((tag) => tag.trim()).filter(Boolean);
+    card.updatedAt = Date.now();
+  });
+}
+
+export function deleteCard(cardId: string) {
+  updateCollection((collection) => {
+    const card = collection.cards.find((item) => item._id === cardId);
+    if (!card) return;
+    collection.cards = collection.cards.filter((item) => item._id !== cardId);
+    collection.studyStates = collection.studyStates.filter((item) => item.cardId !== cardId);
+    collection.reviewLogs = collection.reviewLogs.filter((item) => item.cardId !== cardId);
+    collection.studySessions = collection.studySessions.map((session) => session.currentCardId === cardId ? { ...session, currentCardId: undefined, revealed: false, revealedAt: undefined } : session);
+    const remainingNoteCards = collection.cards.filter((item) => item.deckId === card.deckId && item.noteId === card.noteId);
+    if (!remainingNoteCards.length) {
+      collection.reviewLogs = collection.reviewLogs.filter((item) => item.deckId !== card.deckId || item.cardId !== cardId);
+    }
+  });
+}
+
 export function exportCollection() {
   return JSON.stringify(loadCollection(), null, 2);
 }

@@ -1,11 +1,12 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import Papa from "papaparse";
 import { AnimatePresence, motion } from "framer-motion";
-import { BookOpen, Download, Import, LoaderCircle, Plus, RotateCcw, Upload } from "lucide-react";
+import { BookOpen, Download, Import, LoaderCircle, Pencil, Plus, RotateCcw, Trash2, Upload } from "lucide-react";
 import {
   addNote,
   answerCard,
   createDeck,
+  deleteCard,
   exportCollection,
   getDeck,
   getStudySession,
@@ -15,6 +16,8 @@ import {
   listDecks,
   revealCurrentCard,
   resetCollection,
+  updateCard,
+  updateDeckConfig,
   useCollection,
 } from "./localStore";
 import type { NoteType, Rating } from "./localStore";
@@ -159,13 +162,52 @@ function DeckWorkspace({ deckId, summary }: { deckId: string; summary: Deck }) {
   const [noteStatus, setNoteStatus] = useState<string | null>(null);
   const [importText, setImportText] = useState("");
   const [importStatus, setImportStatus] = useState<string | null>(null);
+  const [browserQuery, setBrowserQuery] = useState("");
+  const [editingCardId, setEditingCardId] = useState<string | null>(null);
+  const [editFront, setEditFront] = useState("");
+  const [editBack, setEditBack] = useState("");
+  const [editHint, setEditHint] = useState("");
+  const [editTags, setEditTags] = useState("");
+
+  const currentCard = study?.currentCard;
+  const revealed = study?.session?.revealed ?? false;
+
+  const filteredCards = useMemo(() => {
+    const cards = deckData?.cards ?? [];
+    const query = browserQuery.trim().toLowerCase();
+    if (!query) return cards;
+    return cards.filter((card: any) =>
+      [card.front, card.back, card.hint ?? "", ...(card.tags ?? [])].join(" ").toLowerCase().includes(query),
+    );
+  }, [browserQuery, deckData?.cards]);
+
+  useEffect(() => {
+    function onKeyDown(event: KeyboardEvent) {
+      const target = event.target as HTMLElement | null;
+      const tag = target?.tagName?.toLowerCase();
+      if (tag === "input" || tag === "textarea" || tag === "select") return;
+      if (!currentCard) return;
+      if (!revealed && (event.key === " " || event.key.toLowerCase() === "enter")) {
+        event.preventDefault();
+        revealCurrentCard(deckId, currentCard._id, true);
+        return;
+      }
+      if (revealed) {
+        const ratingMap: Record<string, Rating> = { "1": "again", "2": "hard", "3": "good", "4": "easy" };
+        const rating = ratingMap[event.key];
+        if (rating) {
+          event.preventDefault();
+          answerCard(deckId, currentCard._id, rating);
+        }
+      }
+    }
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [currentCard, revealed, deckId]);
 
   if (!deckData || !study) {
     return <div className="centered"><LoaderCircle className="spin" /></div>;
   }
-
-  const currentCard = study.currentCard;
-  const revealed = study.session?.revealed ?? false;
 
   return (
     <div className="workspace-stack">
@@ -261,6 +303,72 @@ function DeckWorkspace({ deckId, summary }: { deckId: string; summary: Deck }) {
         <section className="manage-panel">
           <div className="glass import-panel">
             <div className="section-title">
+              <span>Deck options</span>
+            </div>
+            <p className="muted small">Lightweight scheduler controls, closer to Anki deck options.</p>
+            <div className="inline-actions mobile-stack">
+              <label>
+                New/day
+                <input
+                  type="number"
+                  value={study.deckConfig.newCardsPerDay}
+                  onChange={(e) => updateDeckConfig(deckId, { newCardsPerDay: Math.max(0, Number(e.target.value) || 0) })}
+                />
+              </label>
+              <label>
+                Reviews/day
+                <input
+                  type="number"
+                  value={study.deckConfig.reviewsPerDay}
+                  onChange={(e) => updateDeckConfig(deckId, { reviewsPerDay: Math.max(0, Number(e.target.value) || 0) })}
+                />
+              </label>
+            </div>
+            <div className="inline-actions mobile-stack">
+              <label>
+                Learn steps (min)
+                <input
+                  value={study.deckConfig.learnSteps.join(",")}
+                  onChange={(e) => {
+                    const steps = e.target.value.split(",").map((v) => Number(v.trim())).filter((v) => Number.isFinite(v) && v > 0);
+                    if (steps.length) updateDeckConfig(deckId, { learnSteps: steps });
+                  }}
+                />
+              </label>
+              <label>
+                Relearn steps (min)
+                <input
+                  value={study.deckConfig.relearnSteps.join(",")}
+                  onChange={(e) => {
+                    const steps = e.target.value.split(",").map((v) => Number(v.trim())).filter((v) => Number.isFinite(v) && v > 0);
+                    if (steps.length) updateDeckConfig(deckId, { relearnSteps: steps });
+                  }}
+                />
+              </label>
+            </div>
+            <div className="inline-actions mobile-stack">
+              <label>
+                <input
+                  type="checkbox"
+                  checked={study.deckConfig.buryNew}
+                  onChange={(e) => updateDeckConfig(deckId, { buryNew: e.target.checked })}
+                />
+                Bury new siblings
+              </label>
+              <label>
+                <input
+                  type="checkbox"
+                  checked={study.deckConfig.buryReviews}
+                  onChange={(e) => updateDeckConfig(deckId, { buryReviews: e.target.checked })}
+                />
+                Bury review siblings
+              </label>
+            </div>
+            <div className="muted small">Shortcuts: Space/Enter = show answer, 1/2/3/4 = Again/Hard/Good/Easy.</div>
+          </div>
+
+          <div className="glass import-panel">
+            <div className="section-title">
               <span><Plus size={18} /> Add note</span>
             </div>
             <p className="muted small">Basic note types, including a reversed-card option.</p>
@@ -334,20 +442,58 @@ function DeckWorkspace({ deckId, summary }: { deckId: string; summary: Deck }) {
           </div>
 
           <div className="glass library-panel">
-            <div className="section-title">Cards</div>
+            <div className="section-title">Browser</div>
             <div className="library-meta">
               <span>{deckData.cards.length} saved</span>
               <span>{deckData.cards.filter((card: any) => card.state?.phase === "review").length} review</span>
               <span>{deckData.cards.filter((card: any) => card.isDue).length} due</span>
             </div>
+            <input value={browserQuery} onChange={(e) => setBrowserQuery(e.target.value)} placeholder="Search cards, tags, hints" />
             <div className="card-list">
-              {deckData.cards.slice(0, 100).map((card: any) => (
+              {filteredCards.slice(0, 100).map((card: any) => (
                 <div className="card-row" key={card._id}>
-                  <div>
-                    <strong>{card.front}</strong>
-                    <p>{card.back}</p>
+                  <div style={{ flex: 1 }}>
+                    {editingCardId === card._id ? (
+                      <>
+                        <textarea value={editFront} onChange={(e) => setEditFront(e.target.value)} rows={2} placeholder="Front" />
+                        <textarea value={editBack} onChange={(e) => setEditBack(e.target.value)} rows={2} placeholder="Back" />
+                        <input value={editHint} onChange={(e) => setEditHint(e.target.value)} placeholder="Hint" />
+                        <input value={editTags} onChange={(e) => setEditTags(e.target.value)} placeholder="Comma-separated tags" />
+                        <div className="inline-actions mobile-stack">
+                          <button className="primary-button" onClick={() => {
+                            updateCard(card._id, { front: editFront, back: editBack, hint: editHint, tags: editTags.split(',').map((tag) => tag.trim()).filter(Boolean) });
+                            setEditingCardId(null);
+                          }}>Save</button>
+                          <button className="primary-button" onClick={() => setEditingCardId(null)}>Cancel</button>
+                        </div>
+                      </>
+                    ) : (
+                      <>
+                        <strong>{card.front}</strong>
+                        <p>{card.back}</p>
+                        <p className="muted small">{card.tags?.join(' • ') || 'No tags'}</p>
+                      </>
+                    )}
                   </div>
-                  <span className={`phase-tag ${card.state?.phase ?? "new"}`}>{card.templateOrdinal ? `card ${card.templateOrdinal + 1} · ` : ""}{card.state?.phase ?? "new"}</span>
+                  <div className="inline-actions mobile-stack">
+                    <span className={`phase-tag ${card.state?.phase ?? "new"}`}>{card.templateOrdinal ? `card ${card.templateOrdinal + 1} · ` : ""}{card.state?.phase ?? "new"}</span>
+                    {editingCardId !== card._id ? (
+                      <>
+                        <button className="icon-button" aria-label="Edit card" onClick={() => {
+                          setEditingCardId(card._id);
+                          setEditFront(card.front);
+                          setEditBack(card.back);
+                          setEditHint(card.hint ?? '');
+                          setEditTags((card.tags ?? []).join(', '));
+                        }}><Pencil size={14} /></button>
+                        <button className="icon-button" aria-label="Delete card" onClick={() => {
+                          if (!confirm('Delete this card?')) return;
+                          deleteCard(card._id);
+                          if (editingCardId === card._id) setEditingCardId(null);
+                        }}><Trash2 size={14} /></button>
+                      </>
+                    ) : null}
+                  </div>
                 </div>
               ))}
             </div>

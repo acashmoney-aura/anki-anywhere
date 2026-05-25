@@ -16,6 +16,10 @@ try {
   await page.getByRole('button', { name: /create deck/i }).click();
   await page.waitForFunction((name) => document.body.innerText.includes(name), deckName, { timeout: 30000 });
 
+  await page.getByLabel('New/day').fill('10');
+  await page.getByLabel('Reviews/day').fill('50');
+  await page.getByRole('checkbox', { name: /bury new siblings/i }).check();
+
   await page.getByRole('combobox').selectOption('basic_reversed');
   await page.getByRole('textbox', { name: 'Front', exact: true }).fill('Capital of France');
   await page.getByRole('textbox', { name: 'Back', exact: true }).fill('Paris');
@@ -26,8 +30,8 @@ try {
   await page.locator('.manage-panel').getByRole('button', { name: /^Import$/i }).click();
   await page.waitForFunction(() => /3 saved/i.test(document.body.innerText), { timeout: 30000 });
 
-  await page.getByRole('button', { name: /show answer/i }).click();
-  await page.getByRole('button', { name: /^Good/i }).click();
+  await page.keyboard.press('Space');
+  await page.keyboard.press('3');
   await page.waitForTimeout(800);
   await page.reload({ waitUntil: 'networkidle' });
 
@@ -38,6 +42,7 @@ try {
     reviewLogged: /GOOD/i.test(body),
     localMode: /single-user local collection/i.test(body),
     templateLabel: /card 2/i.test(body),
+    deckOptionsPersisted: /10 new|10\snew/i.test(body) || body.includes('1 → 10m steps'),
   };
 
   if (!Object.values(checks).every(Boolean)) {

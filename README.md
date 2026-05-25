@@ -8,6 +8,9 @@ A local-first Anki-style flashcard app for web + mobile.
 - resumable study sessions
 - collection export/import as JSON
 - basic note types, including `Basic` and `Basic (and reversed card)`
+- deck options for daily limits, steps, and sibling bury behavior
+- keyboard review shortcuts (`Space/Enter`, `1/2/3/4`)
+- basic browser/editor for searching and editing cards
 - imports from CSV / TSV / JSON / `front::back::tags`
 - `Again / Hard / Good / Easy` scheduling tuned closely to classic Anki defaults
 
