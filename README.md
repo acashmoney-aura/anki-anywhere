@@ -14,6 +14,7 @@ A local-first Anki-style flashcard app for web + mobile.
 - browser card actions: suspend, manual bury, and flags
 - lightweight deck stats for mature/reviewed/suspended/buried cards
 - imports from CSV / TSV / JSON / `front::back::tags`
+- uploaded Anki package import for `.apkg` / `.colpkg` into the currently selected deck
 - `Again / Hard / Good / Easy` scheduling tuned closely to classic Anki defaults
 
 ## Stack

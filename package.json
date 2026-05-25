@@ -18,10 +18,12 @@
     "convex": "^1.39.1",
     "csv-parse": "^6.2.1",
     "framer-motion": "^12.40.0",
+    "jszip": "^3.10.1",
     "lucide-react": "^1.16.0",
     "papaparse": "^5.5.3",
     "react": "^19.2.6",
     "react-dom": "^19.2.6",
+    "sql.js": "^1.14.1",
     "tailwind-merge": "^3.6.0"
   },
   "devDependencies": {
@@ -31,6 +33,7 @@
     "@types/node": "^24.12.3",
     "@types/react": "^19.2.14",
     "@types/react-dom": "^19.2.3",
+    "@types/sql.js": "^1.4.11",
     "@vitejs/plugin-react": "^6.0.1",
     "eslint": "^10.3.0",
     "eslint-plugin-react-hooks": "^7.1.1",

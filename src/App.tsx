@@ -165,6 +165,7 @@ function DeckWorkspace({ deckId, summary }: { deckId: string; summary: Deck }) {
   const [noteStatus, setNoteStatus] = useState<string | null>(null);
   const [importText, setImportText] = useState("");
   const [importStatus, setImportStatus] = useState<string | null>(null);
+  const [importingFile, setImportingFile] = useState(false);
   const [browserQuery, setBrowserQuery] = useState("");
   const [editingCardId, setEditingCardId] = useState<string | null>(null);
   const [editFront, setEditFront] = useState("");
@@ -432,7 +433,7 @@ function DeckWorkspace({ deckId, summary }: { deckId: string; summary: Deck }) {
             <div className="section-title">
               <span><Import size={18} /> Import cards</span>
             </div>
-            <p className="muted small">CSV, TSV, JSON, or front::back::tags.</p>
+            <p className="muted small">Paste CSV/TSV/JSON, or upload an Anki deck file like <code>.apkg</code> / <code>.colpkg</code>.</p>
             <textarea
               value={importText}
               onChange={(e) => setImportText(e.target.value)}
@@ -455,7 +456,40 @@ function DeckWorkspace({ deckId, summary }: { deckId: string; summary: Deck }) {
               >
                 Import
               </button>
-              <span className="muted small">One row per note.</span>
+              <label className="primary-button" style={{ display: "inline-flex", cursor: importingFile ? "wait" : "pointer", opacity: importingFile ? 0.7 : 1 }}>
+                <Upload size={16} /> {importingFile ? "Importing…" : "Upload deck file"}
+                <input
+                  aria-label="Upload deck file"
+                  type="file"
+                  accept=".apkg,.colpkg,.txt,.csv,.tsv,.json"
+                  style={{ display: "none" }}
+                  disabled={importingFile}
+                  onChange={async (event) => {
+                    const file = event.target.files?.[0];
+                    event.currentTarget.value = "";
+                    if (!file) return;
+                    setImportingFile(true);
+                    try {
+                      if (/\.(apkg|colpkg)$/i.test(file.name)) {
+                        const { parseAnkiPackage } = await import("./ankiPackage");
+                        const parsed = await parseAnkiPackage(file);
+                        importCards(deckId, parsed.cards);
+                        setImportStatus(`Imported ${parsed.cards.length} cards from ${file.name}.`);
+                      } else {
+                        const text = await file.text();
+                        const parsed = parseImport(text);
+                        importCards(deckId, parsed);
+                        setImportStatus(`Imported ${parsed.length} cards from ${file.name}.`);
+                      }
+                    } catch (error) {
+                      setImportStatus(error instanceof Error ? error.message : "File import failed.");
+                    } finally {
+                      setImportingFile(false);
+                    }
+                  }}
+                />
+              </label>
+              <span className="muted small">Anki package import currently targets the selected deck.</span>
             </div>
             {importStatus ? <div className="info-banner">{importStatus}</div> : null}
           </div>
