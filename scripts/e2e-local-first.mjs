@@ -30,6 +30,12 @@ try {
   await page.locator('.manage-panel').getByRole('button', { name: /^Import$/i }).click();
   await page.waitForFunction(() => /3 saved/i.test(document.body.innerText), { timeout: 30000 });
 
+  await page.getByRole('combobox').first().selectOption('cloze');
+  await page.getByPlaceholder('Text with {{c1::deletions}}').fill('The {{c1::mitochondria}} is the {{c2::powerhouse}} of the cell.');
+  await page.getByPlaceholder('Extra / back').fill('Biology classic.');
+  await page.getByRole('button', { name: /add note/i }).click();
+  await page.waitForFunction(() => /5 saved/i.test(document.body.innerText), { timeout: 30000 });
+
   await page.locator('.library-panel .card-row select').first().selectOption('2');
   await page.locator('.library-panel').getByRole('button', { name: /Suspend card/i }).first().click();
   await page.locator('.library-panel').getByRole('button', { name: /Suspend card/i }).first().click();
@@ -43,12 +49,13 @@ try {
   const body = await page.locator('body').innerText();
   const checks = {
     deckPresent: body.includes(deckName),
-    reversedCardsPresent: /3 saved/i.test(body),
+    reversedCardsPresent: /5 saved/i.test(body),
     reviewLogged: /GOOD/i.test(body),
     localMode: /single-user local collection/i.test(body),
     templateLabel: /card 2/i.test(body),
     deckOptionsPersisted: /10 new|10\snew/i.test(body) || body.includes('1 → 10m steps'),
     cardActionsVisible: /F2|flag 2/i.test(body),
+    clozeCardsPresent: /\[\.\.\.\]|mitochondria|powerhouse/i.test(body),
   };
 
   if (!Object.values(checks).every(Boolean)) {

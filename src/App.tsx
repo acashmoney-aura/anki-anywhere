@@ -374,13 +374,14 @@ function DeckWorkspace({ deckId, summary }: { deckId: string; summary: Deck }) {
             <div className="section-title">
               <span><Plus size={18} /> Add note</span>
             </div>
-            <p className="muted small">Basic note types, including a reversed-card option.</p>
+            <p className="muted small">Basic, reversed, and now a lightweight cloze note type.</p>
             <select value={noteType} onChange={(e) => setNoteType(e.target.value as NoteType)}>
               <option value="basic">Basic</option>
               <option value="basic_reversed">Basic (and reversed card)</option>
+              <option value="cloze">Cloze</option>
             </select>
-            <textarea value={noteFront} onChange={(e) => setNoteFront(e.target.value)} rows={4} placeholder="Front" />
-            <textarea value={noteBack} onChange={(e) => setNoteBack(e.target.value)} rows={4} placeholder="Back" />
+            <textarea value={noteFront} onChange={(e) => setNoteFront(e.target.value)} rows={4} placeholder={noteType === "cloze" ? "Text with {{c1::deletions}}" : "Front"} />
+            <textarea value={noteBack} onChange={(e) => setNoteBack(e.target.value)} rows={4} placeholder={noteType === "cloze" ? "Extra / back" : "Back"} />
             <input value={noteHint} onChange={(e) => setNoteHint(e.target.value)} placeholder="Optional hint" />
             <input value={noteTags} onChange={(e) => setNoteTags(e.target.value)} placeholder="Comma-separated tags" />
             <div className="inline-actions mobile-stack">
@@ -388,7 +389,8 @@ function DeckWorkspace({ deckId, summary }: { deckId: string; summary: Deck }) {
                 className="primary-button"
                 onClick={() => {
                   try {
-                    if (!noteFront.trim() || !noteBack.trim()) throw new Error("Front and back are required.");
+                    if (!noteFront.trim()) throw new Error(noteType === "cloze" ? "Cloze text is required." : "Front is required.");
+                    if (noteType !== "cloze" && !noteBack.trim()) throw new Error("Back is required.");
                     addNote(deckId, {
                       front: noteFront,
                       back: noteBack,
@@ -396,7 +398,13 @@ function DeckWorkspace({ deckId, summary }: { deckId: string; summary: Deck }) {
                       tags: noteTags.split(",").map((tag) => tag.trim()).filter(Boolean),
                       noteType,
                     });
-                    setNoteStatus(noteType === "basic_reversed" ? "Added note with 2 cards." : "Added note.");
+                    setNoteStatus(
+                      noteType === "basic_reversed"
+                        ? "Added note with 2 cards."
+                        : noteType === "cloze"
+                          ? "Added cloze note."
+                          : "Added note.",
+                    );
                     setNoteFront("");
                     setNoteBack("");
                     setNoteHint("");

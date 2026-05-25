@@ -115,7 +115,7 @@ export type CardImport = {
   templateOrdinal?: number;
 };
 
-export type NoteType = "basic" | "basic_reversed";
+export type NoteType = "basic" | "basic_reversed" | "cloze";
 
 type Collection = {
   version: 1;
@@ -555,6 +555,31 @@ export function getStudySession(deckId: string) {
   };
 }
 
+function renderClozeText(text: string, clozeNumber: number, reveal: boolean) {
+  return text.replace(/\{\{c(\d+)::(.*?)(?:::(.*?))?\}\}/g, (_match, rawNumber, answer, hint) => {
+    const number = Number(rawNumber);
+    if (number === clozeNumber) {
+      if (reveal) return answer;
+      return `[${hint?.trim() || "..."}]`;
+    }
+    return answer;
+  });
+}
+
+function buildClozeCards(note: { front: string; back: string; hint?: string; tags?: string[]; source?: string }) {
+  const matches = [...note.front.matchAll(/\{\{c(\d+)::(.*?)(?:::(.*?))?\}\}/g)];
+  const clozeNumbers = [...new Set(matches.map((match) => Number(match[1])).filter((value) => Number.isFinite(value) && value > 0))].sort((a, b) => a - b);
+  if (!clozeNumbers.length) throw new Error("Cloze notes need at least one {{c1::answer}} deletion.");
+  return clozeNumbers.map((clozeNumber, index) => ({
+    front: renderClozeText(note.front, clozeNumber, false),
+    back: `${renderClozeText(note.front, clozeNumber, true)}${note.back.trim() ? `\n\n${note.back.trim()}` : ""}`,
+    hint: note.hint,
+    tags: [...(note.tags ?? []), `cloze:${clozeNumber}`],
+    source: note.source,
+    templateOrdinal: index,
+  }));
+}
+
 function insertCard(collection: Collection, deck: Deck, now: number, deckId: string, card: CardImport, noteId: string, templateOrdinal: number) {
   const cardId = makeId("card");
   collection.cards.push({
@@ -600,7 +625,13 @@ export function addNote(deckId: string, note: { front: string; back: string; hin
     const deck = collection.decks.find((item) => item._id === deckId);
     if (!deck) throw new Error("Deck not found");
     const noteId = `note:${now}:${Math.random().toString(36).slice(2, 8)}`;
-    insertCard(collection, deck, now, deckId, { ...note, noteId, templateOrdinal: 0 }, noteId, 0);
+    if (noteType === "cloze") {
+      for (const clozeCard of buildClozeCards(note)) {
+        insertCard(collection, deck, now, deckId, { ...clozeCard, noteId }, noteId, clozeCard.templateOrdinal ?? 0);
+      }
+    } else {
+      insertCard(collection, deck, now, deckId, { ...note, noteId, templateOrdinal: 0 }, noteId, 0);
+    }
     if (noteType === "basic_reversed") {
       insertCard(
         collection,

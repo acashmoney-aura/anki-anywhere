@@ -7,7 +7,7 @@ A local-first Anki-style flashcard app for web + mobile.
 - browser-local collection persistence (no account required)
 - resumable study sessions
 - collection export/import as JSON
-- basic note types, including `Basic` and `Basic (and reversed card)`
+- basic note types, including `Basic`, `Basic (and reversed card)`, and lightweight `Cloze`
 - deck options for daily limits, steps, and sibling bury behavior
 - keyboard review shortcuts (`Space/Enter`, `1/2/3/4`)
 - basic browser/editor for searching and editing cards
