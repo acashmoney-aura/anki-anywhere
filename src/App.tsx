@@ -5,6 +5,7 @@ import { BookOpen, Download, Import, LoaderCircle, Pencil, Plus, RotateCcw, Tras
 import {
   addNote,
   answerCard,
+  buryCard,
   createDeck,
   deleteCard,
   exportCollection,
@@ -16,6 +17,8 @@ import {
   listDecks,
   revealCurrentCard,
   resetCollection,
+  setCardFlag,
+  setCardSuspended,
   updateCard,
   updateDeckConfig,
   useCollection,
@@ -251,7 +254,7 @@ function DeckWorkspace({ deckId, summary }: { deckId: string; summary: Deck }) {
                   {currentCard.hint && !revealed ? <div className="hint">Hint: {currentCard.hint}</div> : null}
                   <div className="card-meta">
                     <span>{currentCard.tags?.length ? currentCard.tags.join(" • ") : "No tags"}</span>
-                    <span>{currentCard.state?.phase ?? "new"}</span>
+                    <span>{currentCard.state?.phase ?? "new"}{currentCard.state?.suspended ? ' · suspended' : ''}{currentCard.state?.flag ? ` · flag ${currentCard.state.flag}` : ''}</span>
                   </div>
                 </motion.div>
               </AnimatePresence>
@@ -476,7 +479,7 @@ function DeckWorkspace({ deckId, summary }: { deckId: string; summary: Deck }) {
                     )}
                   </div>
                   <div className="inline-actions mobile-stack">
-                    <span className={`phase-tag ${card.state?.phase ?? "new"}`}>{card.templateOrdinal ? `card ${card.templateOrdinal + 1} · ` : ""}{card.state?.phase ?? "new"}</span>
+                    <span className={`phase-tag ${card.state?.phase ?? "new"}`}>{card.templateOrdinal ? `card ${card.templateOrdinal + 1} · ` : ""}{card.state?.phase ?? "new"}{card.state?.flag ? ` · F${card.state.flag}` : ''}{card.state?.suspended ? ' · suspended' : ''}</span>
                     {editingCardId !== card._id ? (
                       <>
                         <button className="icon-button" aria-label="Edit card" onClick={() => {
@@ -486,6 +489,15 @@ function DeckWorkspace({ deckId, summary }: { deckId: string; summary: Deck }) {
                           setEditHint(card.hint ?? '');
                           setEditTags((card.tags ?? []).join(', '));
                         }}><Pencil size={14} /></button>
+                        <button className="icon-button" aria-label="Suspend card" onClick={() => setCardSuspended(card._id, !card.state?.suspended)}>{card.state?.suspended ? '▶' : '⏸'}</button>
+                        <button className="icon-button" aria-label="Bury card" onClick={() => buryCard(card._id)}>B</button>
+                        <select aria-label="Set flag" value={card.state?.flag ?? 0} onChange={(e) => setCardFlag(card._id, Number(e.target.value) as 0|1|2|3|4)}>
+                          <option value={0}>No flag</option>
+                          <option value={1}>Flag 1</option>
+                          <option value={2}>Flag 2</option>
+                          <option value={3}>Flag 3</option>
+                          <option value={4}>Flag 4</option>
+                        </select>
                         <button className="icon-button" aria-label="Delete card" onClick={() => {
                           if (!confirm('Delete this card?')) return;
                           deleteCard(card._id);
@@ -496,6 +508,16 @@ function DeckWorkspace({ deckId, summary }: { deckId: string; summary: Deck }) {
                   </div>
                 </div>
               ))}
+            </div>
+          </div>
+
+          <div className="glass library-panel">
+            <div className="section-title">Stats</div>
+            <div className="card-list">
+              <div className="upcoming-row">Mature: {study.stats.matureCards}</div>
+              <div className="upcoming-row">Reviewed: {study.stats.reviewedCards}</div>
+              <div className="upcoming-row">Suspended: {study.stats.suspendedCards}</div>
+              <div className="upcoming-row">Buried: {study.stats.buriedCards}</div>
             </div>
           </div>
 

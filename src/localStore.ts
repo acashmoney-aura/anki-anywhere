@@ -70,6 +70,8 @@ export type StudyState = {
   lastRating?: string;
   buriedUntilDay?: number;
   buriedReason?: string;
+  suspended?: boolean;
+  flag?: 0 | 1 | 2 | 3 | 4;
   createdAt: number;
   updatedAt: number;
 };
@@ -450,6 +452,7 @@ function isBuried(state: StudyState | null | undefined, currentDay: number) {
 
 function isCardDue(state: StudyState | null | undefined, now: number, config: DeckConfig) {
   const currentDay = schedulerDayNumber(now, config);
+  if (state?.suspended) return false;
   if (isBuried(state, currentDay)) return false;
   if (!state || state.phase === "new") return true;
   if (state.phase === "review" && typeof state.dueDay === "number") return state.dueDay <= currentDay;
@@ -545,6 +548,8 @@ export function getStudySession(deckId: string) {
       totalCards: cards.length,
       reviewedCards: collection.studyStates.filter((state) => state.deckId === deckId && state.reps > 0).length,
       matureCards: collection.studyStates.filter((state) => state.deckId === deckId && state.phase === "review" && state.interval >= 21).length,
+      suspendedCards: collection.studyStates.filter((state) => state.deckId === deckId && state.suspended).length,
+      buriedCards: collection.studyStates.filter((state) => state.deckId === deckId && typeof state.buriedUntilDay === 'number').length,
     },
     recentReviews: recentReviews.sort((a, b) => b.createdAt - a.createdAt).slice(0, 12),
   };
@@ -581,6 +586,8 @@ function insertCard(collection: Collection, deck: Deck, now: number, deckId: str
     stepIndex: 0,
     buriedUntilDay: undefined,
     buriedReason: undefined,
+    suspended: false,
+    flag: 0,
     createdAt: now,
     updatedAt: now,
   });
@@ -705,6 +712,44 @@ export function updateCard(cardId: string, patch: { front?: string; back?: strin
     if (typeof patch.hint === "string") card.hint = patch.hint.trim() || undefined;
     if (Array.isArray(patch.tags)) card.tags = patch.tags.map((tag) => tag.trim()).filter(Boolean);
     card.updatedAt = Date.now();
+  });
+}
+
+export function setCardSuspended(cardId: string, suspended: boolean) {
+  updateCollection((collection) => {
+    const state = collection.studyStates.find((item) => item.cardId === cardId);
+    if (!state) throw new Error("Card state not found");
+    state.suspended = suspended;
+    state.updatedAt = Date.now();
+    if (suspended) {
+      const session = collection.studySessions.find((item) => item.deckId === state.deckId && item.currentCardId === cardId);
+      if (session) {
+        session.currentCardId = undefined;
+        session.revealed = false;
+        session.revealedAt = undefined;
+      }
+    }
+  });
+}
+
+export function buryCard(cardId: string) {
+  updateCollection((collection) => {
+    const state = collection.studyStates.find((item) => item.cardId === cardId);
+    if (!state) throw new Error("Card state not found");
+    const deck = collection.decks.find((item) => item._id === state.deckId);
+    if (!deck) throw new Error("Deck not found");
+    state.buriedUntilDay = schedulerDayNumber(Date.now(), deck.config);
+    state.buriedReason = "manual";
+    state.updatedAt = Date.now();
+  });
+}
+
+export function setCardFlag(cardId: string, flag: 0 | 1 | 2 | 3 | 4) {
+  updateCollection((collection) => {
+    const state = collection.studyStates.find((item) => item.cardId === cardId);
+    if (!state) throw new Error("Card state not found");
+    state.flag = flag;
+    state.updatedAt = Date.now();
   });
 }
 

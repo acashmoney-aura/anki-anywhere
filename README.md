@@ -11,6 +11,8 @@ A local-first Anki-style flashcard app for web + mobile.
 - deck options for daily limits, steps, and sibling bury behavior
 - keyboard review shortcuts (`Space/Enter`, `1/2/3/4`)
 - basic browser/editor for searching and editing cards
+- browser card actions: suspend, manual bury, and flags
+- lightweight deck stats for mature/reviewed/suspended/buried cards
 - imports from CSV / TSV / JSON / `front::back::tags`
 - `Again / Hard / Good / Easy` scheduling tuned closely to classic Anki defaults
 

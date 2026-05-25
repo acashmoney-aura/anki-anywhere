@@ -30,6 +30,11 @@ try {
   await page.locator('.manage-panel').getByRole('button', { name: /^Import$/i }).click();
   await page.waitForFunction(() => /3 saved/i.test(document.body.innerText), { timeout: 30000 });
 
+  await page.locator('.library-panel .card-row select').first().selectOption('2');
+  await page.locator('.library-panel').getByRole('button', { name: /Suspend card/i }).first().click();
+  await page.locator('.library-panel').getByRole('button', { name: /Suspend card/i }).first().click();
+  await page.locator('.library-panel').getByRole('button', { name: /Bury card/i }).first().click();
+
   await page.keyboard.press('Space');
   await page.keyboard.press('3');
   await page.waitForTimeout(800);
@@ -43,6 +48,7 @@ try {
     localMode: /single-user local collection/i.test(body),
     templateLabel: /card 2/i.test(body),
     deckOptionsPersisted: /10 new|10\snew/i.test(body) || body.includes('1 → 10m steps'),
+    cardActionsVisible: /F2|flag 2/i.test(body),
   };
 
   if (!Object.values(checks).every(Boolean)) {
